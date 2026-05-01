@@ -1,0 +1,44 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "build",
+        "${workspaceFolder}/EqApoTray.sln",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary;ForceNoAlign"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "watch",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "watch",
+        "--project",
+        "${workspaceFolder}/src/EqApoTray/EqApoTray.csproj",
+        "run"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "publish",
+      "command": "pwsh",
+      "type": "process",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "${workspaceFolder}/scripts/publish.ps1"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch EqApoTray (Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/EqApoTray/bin/Debug/net10.0-windows/EqApoTray.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/EqApoTray",
+      "console": "internalConsole",
+      "stopAtEntry": false
+    }
+  ]
+}
