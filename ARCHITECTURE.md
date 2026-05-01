@@ -32,7 +32,7 @@ eqapo-tray/
 ├── src/EqApoTray/                   # the only application project
 │   ├── EqApoTray.csproj
 │   ├── app.manifest                 # PerMonitorV2 DPI, asInvoker, Win10/11 target
-│   ├── App.xaml(+.cs)               # entry point; owns the TaskbarIcon
+│   ├── App.xaml(+.cs)               # entry point; owns TaskbarIcon + dialog owner
 │   ├── FlyoutControl.xaml(+.cs)     # the popup UserControl
 │   └── Services/
 │       ├── EqApoConfig.cs           # read/write `Preamp: X.X dB` line
@@ -49,14 +49,17 @@ eqapo-tray/
 
 - **`App.xaml.cs`** — `OnStartup` constructs the `TaskbarIcon` programmatically,
   attaches a single shared `FlyoutControl` as `TrayPopup`, and builds a
-  right-click `ContextMenu` with "Open / Quit". `ShutdownMode` is
-  `OnExplicitShutdown`: closing the flyout never exits the app; only the Quit
-  menu item or `Application.Shutdown()` does.
-- **`FlyoutControl`** — Stateless w.r.t. its host. On `Loaded` it pulls the
-  current `Preamp` value, autostart bit, and config-path status from disk and
-  populates the UI. The slider's `ValueChanged` is debounced through a 60 ms
-  `DispatcherTimer` to avoid hammering `config.txt` (which Equalizer APO
-  watches and reloads on each change). Status dot turns red on any I/O failure.
+  right-click `ContextMenu` with "Quit". It also creates a hidden, long-lived
+  WPF `Window` whose HWND is used as the owner for common dialogs and message
+  boxes opened from the flyout. `ShutdownMode` is `OnExplicitShutdown`: closing
+  the flyout never exits the app; only the Quit menu item or
+  `Application.Shutdown()` does.
+- **`FlyoutControl`** — Stateless w.r.t. its host except for the injected dialog
+  owner. On `Loaded` it pulls the current `Preamp` value, autostart bit, and
+  config-path status from disk and populates the UI. The slider's
+  `ValueChanged` is debounced through a 60 ms `DispatcherTimer` to avoid
+  hammering `config.txt` (which Equalizer APO watches and reloads on each
+  change). Status dot turns red on any I/O failure.
 - **`Services/EqApoConfig`** — Single regex (`Preamp:\s*([-\d.]+)\s*dB`)
   matches both reading and writing. Format is locked to `InvariantCulture`
   (`F1`) so a German locale doesn't write `Preamp: 3,5 dB`.
@@ -66,7 +69,10 @@ eqapo-tray/
   `%APPDATA%\EqApoTray\settings.json`. The prototype put it next to the EXE,
   which fails when the EXE lives in `Program Files`.
 - **`Services/TrayIconFactory`** — Renders a 32×32 blue circle with "dB" text
-  via `DrawingVisual` → `RenderTargetBitmap`. Avoids shipping an `.ico` asset.
+  via `DrawingVisual` → `RenderTargetBitmap`, then converts it to a
+  `System.Drawing.Icon` for `H.NotifyIcon`'s Win32 tray API path. `GetHicon()`
+  handles are cloned into a managed `Icon` and released with `DestroyIcon`.
+  Avoids shipping an `.ico` asset.
 
 ## Key flows
 
@@ -74,6 +80,12 @@ eqapo-tray/
 popup window anchored to the tray icon, auto-closes on outside click. No
 manual positioning code needed — that's the whole reason this library was
 chosen over rolling our own `NotifyIcon`.
+
+**Config picker → common dialog.** The "配置..." button opens
+`OpenFileDialog` with the hidden owner window from `App.xaml.cs`. Do not call
+`ShowDialog()` without an explicit owner from inside the `TrayPopup`: the
+popup host auto-closes when it loses focus, and if WPF chooses that transient
+popup window as the owner, the file dialog can be closed immediately with it.
 
 **Slider drag → file write.** Each `ValueChanged` resets a 60 ms timer; on
 tick we write the new `Preamp` line atomically (full read-modify-write of
@@ -94,6 +106,16 @@ Python version.
 - **Threading:** all UI work stays on the dispatcher thread. There's no
   background work that needs `Task.Run` yet; if file I/O ever moves async,
   watch for re-entrancy on the slider event.
+- **Tray icon type:** `TaskbarIcon.Icon` gets a `System.Drawing.Icon`, not the
+  WPF `IconSource` path. Any unmanaged HICON produced by `GetHicon()` must be
+  cloned into a managed `Icon` before the original handle is released with
+  `DestroyIcon`. The project enables `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`
+  only because the `[LibraryImport]` source generator emits unsafe marshalling
+  code for that P/Invoke.
+- **Dialog ownership:** common dialogs and message boxes launched from the
+  tray flyout use the hidden owner window created at startup. Avoid ownerless
+  `ShowDialog()` calls in `FlyoutControl`; they can bind to the transient
+  `TrayPopup` host and vanish when the popup auto-closes.
 - **No MVVM framework.** The app is small enough that code-behind is
   honest and shorter than wiring up `INotifyPropertyChanged` plumbing.
   Don't add CommunityToolkit.Mvvm for the sake of it.
