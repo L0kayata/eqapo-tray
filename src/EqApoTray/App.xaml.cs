@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using EqApoTray.Services;
 using H.NotifyIcon;
 using Wpf.Ui.Appearance;
@@ -10,20 +11,20 @@ public partial class App : Application
 {
     private TaskbarIcon? _trayIcon;
     private FlyoutControl? _flyout;
+    private Window? _dialogOwnerWindow;
 
     private void OnStartup(object sender, StartupEventArgs e)
     {
         ApplicationThemeManager.ApplySystemTheme(updateAccent: true);
 
-        _flyout = new FlyoutControl();
+        _dialogOwnerWindow = CreateDialogOwnerWindow();
+        _flyout = new FlyoutControl(_dialogOwnerWindow);
 
         _trayIcon = new TaskbarIcon
         {
-            IconSource = TrayIconFactory.Create(),
+            Icon = TrayIconFactory.Create(),
             ToolTipText = "EqAPO Tray",
             TrayPopup = _flyout,
-            MenuActivation = PopupActivationMode.RightClick,
-            PopupActivation = PopupActivationMode.LeftClick,
             ContextMenu = BuildContextMenu(),
         };
         _trayIcon.ForceCreate();
@@ -32,18 +33,34 @@ public partial class App : Application
     private ContextMenu BuildContextMenu()
     {
         var menu = new ContextMenu();
-        var openItem = new MenuItem { Header = "打开控制面板" };
-        openItem.Click += (_, _) => _trayIcon?.ShowTrayPopup();
         var quitItem = new MenuItem { Header = "退出" };
         quitItem.Click += (_, _) => Shutdown();
-        menu.Items.Add(openItem);
-        menu.Items.Add(new Separator());
         menu.Items.Add(quitItem);
         return menu;
+    }
+
+    private static Window CreateDialogOwnerWindow()
+    {
+        // Common dialogs need an owner that outlives H.NotifyIcon's transient TrayPopup window.
+        var window = new Window
+        {
+            Width = 0,
+            Height = 0,
+            Left = -32000,
+            Top = -32000,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize,
+            ShowActivated = false,
+            ShowInTaskbar = false,
+        };
+
+        _ = new WindowInteropHelper(window).EnsureHandle();
+        return window;
     }
 
     private void OnExit(object sender, ExitEventArgs e)
     {
         _trayIcon?.Dispose();
+        _dialogOwnerWindow?.Close();
     }
 }

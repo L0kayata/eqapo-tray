@@ -14,13 +14,15 @@ public partial class FlyoutControl : UserControl
     private static readonly Brush GreenBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0xA0, 0x43));
     private static readonly Brush RedBrush = new SolidColorBrush(Color.FromRgb(0xD1, 0x34, 0x38));
 
+    private readonly Window _dialogOwner;
     private readonly Settings _settings = SettingsStore.Load();
     private readonly DispatcherTimer _writeTimer;
     private double _pendingValue;
     private bool _suppressEvents;
 
-    public FlyoutControl()
+    public FlyoutControl(Window dialogOwner)
     {
+        _dialogOwner = dialogOwner;
         InitializeComponent();
 
         _writeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
@@ -106,7 +108,7 @@ public partial class FlyoutControl : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "无法修改开机自启", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(_dialogOwner, ex.Message, "无法修改开机自启", MessageBoxButton.OK, MessageBoxImage.Warning);
             _suppressEvents = true;
             StartupCheck.IsChecked = StartupService.IsEnabled();
             _suppressEvents = false;
@@ -123,7 +125,7 @@ public partial class FlyoutControl : UserControl
                 ? Path.GetDirectoryName(_settings.ConfigPath)
                 : null,
         };
-        if (dlg.ShowDialog() == true)
+        if (dlg.ShowDialog(_dialogOwner) == true)
         {
             _settings.ConfigPath = dlg.FileName;
             SettingsStore.Save(_settings);

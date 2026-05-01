@@ -12,6 +12,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <NeutralLanguage>zh-CN</NeutralLanguage>
     <Version>0.1.0</Version>
+    <!-- Required by [LibraryImport] source generator (it emits unsafe marshalling code; our own code stays safe). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
