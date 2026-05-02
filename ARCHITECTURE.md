@@ -38,6 +38,7 @@ eqapo-tray/
 │       ├── EqApoConfig.cs           # read/write `Preamp: X.X dB` line
 │       ├── StartupService.cs        # HKCU\…\Run registry toggle
 │       ├── SettingsStore.cs         # JSON in %APPDATA%\EqApoTray\settings.json
+│       ├── TrayPopupPositioner.cs   # precise Shell_NotifyIconGetRect anchor
 │       └── TrayIconFactory.cs       # programmatic 32×32 tray icon
 └── prototype/                       # original Python/Tk prototype (frozen)
     ├── eqapo_tray.py
@@ -68,6 +69,10 @@ eqapo-tray/
 - **`Services/SettingsStore`** — Persists the user-chosen config-file path to
   `%APPDATA%\EqApoTray\settings.json`. The prototype put it next to the EXE,
   which fails when the EXE lives in `Program Files`.
+- **`Services/TrayPopupPositioner`** — Uses `Shell_NotifyIconGetRect` to query
+  the actual notification icon rectangle, including when the icon is clicked
+  from the overflow tray. It converts physical pixels to WPF popup coordinates
+  and clamps the flyout to the current monitor work area.
 - **`Services/TrayIconFactory`** — Renders a 32×32 blue circle with "dB" text
   via `DrawingVisual` → `RenderTargetBitmap`, then converts it to a
   `System.Drawing.Icon` for `H.NotifyIcon`'s Win32 tray API path. `GetHicon()`
@@ -77,9 +82,12 @@ eqapo-tray/
 ## Key flows
 
 **Tray click → flyout shown.** `H.NotifyIcon` shows `TrayPopup` as a Win32
-popup window anchored to the tray icon, auto-closes on outside click. No
-manual positioning code needed — that's the whole reason this library was
-chosen over rolling our own `NotifyIcon`.
+popup window and still owns auto-close/focus behavior. The app overrides only
+the left-click activation path: built-in popup activation is disabled because
+`H.NotifyIcon.Wpf 2.1.4` does not call its own `CustomPopupPosition` delegate.
+`App.xaml.cs` handles `TrayLeftMouseUp`, asks `TrayPopupPositioner` for the real
+icon rectangle, then calls `ShowTrayPopup` with a top-left point centered above
+that rectangle.
 
 **Config picker → common dialog.** The "配置..." button opens
 `OpenFileDialog` with the hidden owner window from `App.xaml.cs`. Do not call
@@ -151,10 +159,9 @@ C# Dev Kit + C#.
   reloads on each write. Rapid writes are fine in practice (debounced to
   60 ms) but tearing is possible on slow disks — if it shows up, switch to
   write-temp-then-rename.
-- **Flyout positioning.** Currently relies on `H.NotifyIcon`'s default popup
-  placement, which is "near the tray icon". If we want exact parity with the
-  Win11 volume flyout (slide-up animation, anchored above taskbar), we'd
-  hook `Shell_NotifyIconGetRect` directly via P/Invoke.
+- **Flyout animation.** Positioning is exact, but the popup still uses the
+  default WPF popup behavior rather than the Win11 volume flyout's slide-up
+  animation.
 - **NativeAOT.** WPF + AOT is supported in .NET 8+ but with caveats (XAML
   reflection, some package incompatibilities). Worth revisiting once
   `WPF-UI` and `H.NotifyIcon.Wpf` declare AOT compatibility — would shrink
