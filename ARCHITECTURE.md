@@ -87,7 +87,20 @@ the left-click activation path: built-in popup activation is disabled because
 `H.NotifyIcon.Wpf 2.1.4` does not call its own `CustomPopupPosition` delegate.
 `App.xaml.cs` handles `TrayLeftMouseUp`, asks `TrayPopupPositioner` for the real
 icon rectangle, then calls `ShowTrayPopup` with a top-left point centered above
-that rectangle.
+that rectangle. The flyout root animates in with a 500 ms slide-up + fade
+(`CubicEase` out) kicked off from `FlyoutControl.OnLoaded` via
+`BeginAnimation` — fires on every reopen because WPF re-parents a `Popup`'s
+child each time `IsOpen` flips to true. Code-behind, not an `EventTrigger`,
+because the trigger doesn't reliably fire for popup-hosted children.
+
+**Tray click → flyout toggled.** A second click on the tray icon retracts the
+flyout. The popup uses `StaysOpen=false`, so it auto-closes on the focus loss
+that the click itself causes, *before* `TrayLeftMouseUp` reaches us — by the
+time we'd check `TrayPopupResolved.IsOpen` it's already false. We hook
+`Popup.Closed` to record the close time (`Environment.TickCount64`); a
+left-click arriving within 120 ms is treated as that same toggle-off click
+and suppressed. The timestamp is consumed on first use so a rapid second
+click reopens immediately instead of being eaten by the same window.
 
 **Config picker → common dialog.** The "配置..." button opens
 `OpenFileDialog` with the hidden owner window from `App.xaml.cs`. Do not call
@@ -159,9 +172,6 @@ C# Dev Kit + C#.
   reloads on each write. Rapid writes are fine in practice (debounced to
   60 ms) but tearing is possible on slow disks — if it shows up, switch to
   write-temp-then-rename.
-- **Flyout animation.** Positioning is exact, but the popup still uses the
-  default WPF popup behavior rather than the Win11 volume flyout's slide-up
-  animation.
 - **NativeAOT.** WPF + AOT is supported in .NET 8+ but with caveats (XAML
   reflection, some package incompatibilities). Worth revisiting once
   `WPF-UI` and `H.NotifyIcon.Wpf` declare AOT compatibility — would shrink

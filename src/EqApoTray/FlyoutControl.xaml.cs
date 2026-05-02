@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using EqApoTray.Services;
 using Microsoft.Win32;
@@ -58,6 +59,21 @@ public partial class FlyoutControl : UserControl
         RefreshFromDisk();
         Focusable = true;
         Focus();
+        PlayEnterAnimation();
+    }
+
+    private void PlayEnterAnimation()
+    {
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var duration = new Duration(TimeSpan.FromMilliseconds(500));
+
+        EnterTranslate.BeginAnimation(
+            TranslateTransform.YProperty,
+            new DoubleAnimation { From = 12, To = 0, Duration = duration, EasingFunction = ease });
+
+        FlyoutRoot.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation { From = 0, To = 1, Duration = duration, EasingFunction = ease });
     }
 
     private void GainSlider_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
