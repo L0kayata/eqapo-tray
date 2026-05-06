@@ -1,258 +1,71 @@
 using System.Globalization;
 using System.IO;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Animation;
-using System.Windows.Threading;
 using EqApoTray.Services;
-using Microsoft.Win32;
+using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
 
 namespace EqApoTray;
 
 public partial class FlyoutControl : UserControl
 {
-    private static readonly Brush GreenBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0xA0, 0x43));
-    private static readonly Brush RedBrush = new SolidColorBrush(Color.FromRgb(0xD1, 0x34, 0x38));
+    private static readonly Brush GreenBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x2E, 0xA0, 0x43));
+    private static readonly Brush RedBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xD1, 0x34, 0x38));
 
-    private readonly Window _dialogOwner;
+    private const string ConfigFileFilter =
+        "Equalizer APO 配置文件 (*.txt)\0*.txt\0所有文件 (*.*)\0*.*\0";
+
     private readonly Settings _settings = SettingsStore.Load();
-    private readonly DispatcherTimer _writeTimer;
+    private readonly DispatcherQueueTimer _writeTimer;
     private double _pendingValue;
     private bool _isDraggingSliderTrack;
     private bool _suppressEvents;
 
-    public FlyoutControl(Window dialogOwner)
+    public FlyoutControl()
     {
-        _dialogOwner = dialogOwner;
         InitializeComponent();
-        AttachGainSliderTrackDragHandlers();
 
-        _writeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
+        var queue = DispatcherQueue.GetForCurrentThread();
+        _writeTimer = queue.CreateTimer();
+        _writeTimer.Interval = TimeSpan.FromMilliseconds(60);
+        _writeTimer.IsRepeating = false;
         _writeTimer.Tick += OnWriteTimerTick;
+
+        AttachGainSliderTrackDragHandlers();
     }
+
+    public IntPtr DialogOwnerHwnd { get; set; }
 
     private void AttachGainSliderTrackDragHandlers()
     {
         GainSlider.AddHandler(
-            UIElement.PreviewMouseLeftButtonDownEvent,
-            new MouseButtonEventHandler(GainSlider_PreviewMouseLeftButtonDown),
+            UIElement.PointerPressedEvent,
+            new PointerEventHandler(GainSlider_PointerPressed),
             handledEventsToo: true);
         GainSlider.AddHandler(
-            UIElement.PreviewMouseMoveEvent,
-            new MouseEventHandler(GainSlider_PreviewMouseMove),
+            UIElement.PointerMovedEvent,
+            new PointerEventHandler(GainSlider_PointerMoved),
             handledEventsToo: true);
         GainSlider.AddHandler(
-            UIElement.PreviewMouseLeftButtonUpEvent,
-            new MouseButtonEventHandler(GainSlider_PreviewMouseLeftButtonUp),
+            UIElement.PointerReleasedEvent,
+            new PointerEventHandler(GainSlider_PointerReleased),
             handledEventsToo: true);
         GainSlider.AddHandler(
-            UIElement.LostMouseCaptureEvent,
-            new MouseEventHandler(GainSlider_LostMouseCapture),
+            UIElement.PointerCaptureLostEvent,
+            new PointerEventHandler(GainSlider_PointerCaptureLost),
             handledEventsToo: true);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         RefreshFromDisk();
-        Focusable = true;
-        Focus();
-        PlayEnterAnimation();
     }
 
-    private void PlayEnterAnimation()
-    {
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        var duration = new Duration(TimeSpan.FromMilliseconds(500));
-
-        EnterTranslate.BeginAnimation(
-            TranslateTransform.YProperty,
-            new DoubleAnimation { From = 12, To = 0, Duration = duration, EasingFunction = ease });
-
-        FlyoutRoot.BeginAnimation(
-            OpacityProperty,
-            new DoubleAnimation { From = 0, To = 1, Duration = duration, EasingFunction = ease });
-    }
-
-    private void GainSlider_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is not Slider slider || IsFromThumb(e.OriginalSource as DependencyObject))
-        {
-            return;
-        }
-
-        if (!TryMoveSliderToMousePoint(slider, e))
-        {
-            return;
-        }
-
-        _isDraggingSliderTrack = true;
-        slider.Focus();
-        slider.CaptureMouse();
-        e.Handled = true;
-    }
-
-    private void GainSlider_PreviewMouseMove(object sender, MouseEventArgs e)
-    {
-        if (!_isDraggingSliderTrack || sender is not Slider slider)
-        {
-            return;
-        }
-
-        if (e.LeftButton != MouseButtonState.Pressed)
-        {
-            FinishSliderTrackDrag(slider);
-            return;
-        }
-
-        TryMoveSliderToMousePoint(slider, e);
-        e.Handled = true;
-    }
-
-    private void GainSlider_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-    {
-        if (!_isDraggingSliderTrack || sender is not Slider slider)
-        {
-            return;
-        }
-
-        TryMoveSliderToMousePoint(slider, e);
-        FinishSliderTrackDrag(slider);
-        e.Handled = true;
-    }
-
-    private void GainSlider_LostMouseCapture(object sender, MouseEventArgs e)
-    {
-        _isDraggingSliderTrack = false;
-    }
-
-    private static bool TryMoveSliderToMousePoint(Slider slider, MouseEventArgs e)
-    {
-        if (slider.Template.FindName("PART_Track", slider) is not Track track)
-        {
-            return false;
-        }
-
-        if (!TryGetSliderValueFromPoint(slider, track, e.GetPosition(track), out var value))
-        {
-            return false;
-        }
-
-        slider.Value = SnapSliderValue(slider, value);
-        return true;
-    }
-
-    private static bool TryGetSliderValueFromPoint(Slider slider, Track track, Point point, out double value)
-    {
-        value = default;
-
-        var range = slider.Maximum - slider.Minimum;
-        if (range <= 0)
-        {
-            return false;
-        }
-
-        double ratio;
-        if (slider.Orientation == Orientation.Vertical)
-        {
-            if (track.ActualHeight <= 0)
-            {
-                return false;
-            }
-
-            ratio = 1 - point.Y / track.ActualHeight;
-        }
-        else
-        {
-            if (track.ActualWidth <= 0)
-            {
-                return false;
-            }
-
-            ratio = point.X / track.ActualWidth;
-        }
-
-        if (slider.IsDirectionReversed)
-        {
-            ratio = 1 - ratio;
-        }
-
-        ratio = Math.Clamp(ratio, 0, 1);
-        value = slider.Minimum + ratio * range;
-        return true;
-    }
-
-    private static double SnapSliderValue(Slider slider, double value)
-    {
-        value = Math.Clamp(value, slider.Minimum, slider.Maximum);
-
-        if (!slider.IsSnapToTickEnabled)
-        {
-            return value;
-        }
-
-        if (slider.Ticks.Count > 0)
-        {
-            var nearest = slider.Ticks[0];
-            var nearestDistance = Math.Abs(value - nearest);
-
-            foreach (var tick in slider.Ticks)
-            {
-                var distance = Math.Abs(value - tick);
-                if (distance < nearestDistance)
-                {
-                    nearest = tick;
-                    nearestDistance = distance;
-                }
-            }
-
-            return Math.Clamp(nearest, slider.Minimum, slider.Maximum);
-        }
-
-        if (slider.TickFrequency <= 0)
-        {
-            return value;
-        }
-
-        var tickCount = Math.Round((value - slider.Minimum) / slider.TickFrequency);
-        return Math.Clamp(slider.Minimum + tickCount * slider.TickFrequency, slider.Minimum, slider.Maximum);
-    }
-
-    private void FinishSliderTrackDrag(Slider slider)
-    {
-        _isDraggingSliderTrack = false;
-
-        if (slider.IsMouseCaptured)
-        {
-            slider.ReleaseMouseCapture();
-        }
-    }
-
-    private static bool IsFromThumb(DependencyObject? source)
-    {
-        while (source is not null)
-        {
-            if (source is Thumb)
-            {
-                return true;
-            }
-
-            source = source is Visual or System.Windows.Media.Media3D.Visual3D
-                ? VisualTreeHelper.GetParent(source)
-                : source switch
-                {
-                    FrameworkElement element => element.Parent,
-                    FrameworkContentElement contentElement => contentElement.Parent,
-                    _ => null,
-                };
-        }
-
-        return false;
-    }
-
-    private void RefreshFromDisk()
+    public void RefreshFromDisk()
     {
         _suppressEvents = true;
         try
@@ -280,7 +93,129 @@ public partial class FlyoutControl : UserControl
         }
     }
 
-    private void GainSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    private void GainSlider_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is not Slider slider)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(slider).Position;
+        if (!TryComputeValueFromPoint(slider, point, out var value))
+        {
+            return;
+        }
+
+        slider.Value = SnapValue(slider, value);
+        slider.Focus(FocusState.Pointer);
+        slider.CapturePointer(e.Pointer);
+        _isDraggingSliderTrack = true;
+        e.Handled = true;
+    }
+
+    private void GainSlider_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_isDraggingSliderTrack || sender is not Slider slider)
+        {
+            return;
+        }
+
+        var props = e.GetCurrentPoint(slider).Properties;
+        if (!props.IsLeftButtonPressed)
+        {
+            FinishSliderTrackDrag(slider, e.Pointer);
+            return;
+        }
+
+        var point = e.GetCurrentPoint(slider).Position;
+        if (TryComputeValueFromPoint(slider, point, out var value))
+        {
+            slider.Value = SnapValue(slider, value);
+        }
+
+        e.Handled = true;
+    }
+
+    private void GainSlider_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_isDraggingSliderTrack || sender is not Slider slider)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(slider).Position;
+        if (TryComputeValueFromPoint(slider, point, out var value))
+        {
+            slider.Value = SnapValue(slider, value);
+        }
+
+        FinishSliderTrackDrag(slider, e.Pointer);
+        e.Handled = true;
+    }
+
+    private void GainSlider_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        _isDraggingSliderTrack = false;
+    }
+
+    private static bool TryComputeValueFromPoint(Slider slider, Point point, out double value)
+    {
+        value = default;
+
+        var range = slider.Maximum - slider.Minimum;
+        if (range <= 0)
+        {
+            return false;
+        }
+
+        double ratio;
+        if (slider.Orientation == Orientation.Vertical)
+        {
+            if (slider.ActualHeight <= 0)
+            {
+                return false;
+            }
+            ratio = 1 - point.Y / slider.ActualHeight;
+        }
+        else
+        {
+            if (slider.ActualWidth <= 0)
+            {
+                return false;
+            }
+            ratio = point.X / slider.ActualWidth;
+        }
+
+        if (slider.IsDirectionReversed)
+        {
+            ratio = 1 - ratio;
+        }
+
+        ratio = Math.Clamp(ratio, 0, 1);
+        value = slider.Minimum + ratio * range;
+        return true;
+    }
+
+    private static double SnapValue(Slider slider, double value)
+    {
+        value = Math.Clamp(value, slider.Minimum, slider.Maximum);
+
+        if (slider.SnapsTo != SliderSnapsTo.StepValues || slider.StepFrequency <= 0)
+        {
+            return value;
+        }
+
+        var steps = Math.Round((value - slider.Minimum) / slider.StepFrequency);
+        return Math.Clamp(slider.Minimum + steps * slider.StepFrequency, slider.Minimum, slider.Maximum);
+    }
+
+    private void FinishSliderTrackDrag(Slider slider, Pointer pointer)
+    {
+        _isDraggingSliderTrack = false;
+        slider.ReleasePointerCapture(pointer);
+    }
+
+    private void GainSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         UpdateGainLabel(e.NewValue);
         if (_suppressEvents) return;
@@ -290,9 +225,8 @@ public partial class FlyoutControl : UserControl
         _writeTimer.Start();
     }
 
-    private void OnWriteTimerTick(object? sender, EventArgs e)
+    private void OnWriteTimerTick(DispatcherQueueTimer sender, object args)
     {
-        _writeTimer.Stop();
         try
         {
             EqApoConfig.Write(_settings.ConfigPath, _pendingValue);
@@ -312,7 +246,7 @@ public partial class FlyoutControl : UserControl
     private void SetStatus(bool ok)
     {
         StatusDot.Fill = ok ? GreenBrush : RedBrush;
-        StatusDot.ToolTip = ok ? "配置文件已加载" : "无法读写配置文件（路径不存在或权限不足）";
+        ToolTipService.SetToolTip(StatusDot, ok ? "配置文件已加载" : "无法读写配置文件（路径不存在或权限不足）");
     }
 
     private void StartupCheck_Toggled(object sender, RoutedEventArgs e)
@@ -324,28 +258,44 @@ public partial class FlyoutControl : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show(_dialogOwner, ex.Message, "无法修改开机自启", MessageBoxButton.OK, MessageBoxImage.Warning);
             _suppressEvents = true;
             StartupCheck.IsChecked = StartupService.IsEnabled();
             _suppressEvents = false;
+            _ = ShowErrorAsync("无法修改开机自启", ex.Message);
         }
     }
 
     private void BrowseConfig_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new OpenFileDialog
+        var initialDir = File.Exists(_settings.ConfigPath)
+            ? Path.GetDirectoryName(_settings.ConfigPath)
+            : null;
+
+        var path = Win32FileDialog.PickFile(
+            DialogOwnerHwnd,
+            "选择 Equalizer APO 配置文件",
+            ConfigFileFilter,
+            initialDir);
+
+        if (path is null)
         {
-            Title = "选择 Equalizer APO 配置文件",
-            Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
-            InitialDirectory = File.Exists(_settings.ConfigPath)
-                ? Path.GetDirectoryName(_settings.ConfigPath)
-                : null,
-        };
-        if (dlg.ShowDialog(_dialogOwner) == true)
-        {
-            _settings.ConfigPath = dlg.FileName;
-            SettingsStore.Save(_settings);
-            RefreshFromDisk();
+            return;
         }
+
+        _settings.ConfigPath = path;
+        SettingsStore.Save(_settings);
+        RefreshFromDisk();
+    }
+
+    private async System.Threading.Tasks.Task ShowErrorAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = message,
+            CloseButtonText = "确定",
+            XamlRoot = XamlRoot,
+        };
+        await dialog.ShowAsync();
     }
 }

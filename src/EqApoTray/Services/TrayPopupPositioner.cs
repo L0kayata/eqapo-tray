@@ -3,7 +3,7 @@ using H.NotifyIcon;
 
 namespace EqApoTray.Services;
 
-internal static partial class TrayPopupPositioner
+public static partial class TrayPopupPositioner
 {
     private const uint MonitorDefaultToNearest = 0x00000002;
     private const int SmXVirtualScreen = 76;

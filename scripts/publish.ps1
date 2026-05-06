@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
-    Publishes EqApoTray as a single self-contained Windows executable.
+    Publishes EqApoTray as a Native AOT Windows executable.
 
 .DESCRIPTION
-    Produces a single .exe that does not require .NET runtime on the user's machine.
-    Output: dist/EqApoTray-win-x64/EqApoTray.exe
+    Native AOT publish: no .NET runtime required on the target machine. Output:
+    dist/EqApoTray-win-x64/EqApoTray.exe (and supporting WindowsAppSDK runtime DLLs).
 
 .PARAMETER Configuration
     Build configuration (default: Release).
 
 .PARAMETER Runtime
-    Target RID (default: win-x64). Use win-arm64 for ARM64.
+    Target RID (default: win-x64). Use win-arm64 for ARM64 (requires native ARM64 build host).
 #>
 [CmdletBinding()]
 param(
@@ -24,16 +24,14 @@ $root    = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $root "src/EqApoTray/EqApoTray.csproj"
 $output  = Join-Path $root "dist/EqApoTray-$Runtime"
 
-Write-Host "Publishing $project -> $output" -ForegroundColor Cyan
+Write-Host "Publishing $project -> $output (AOT, $Configuration / $Runtime)" -ForegroundColor Cyan
 
 dotnet publish $project `
     -c $Configuration `
     -r $Runtime `
-    --self-contained true `
-    -p:PublishSingleFile=true `
-    -p:EnableCompressionInSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:DebugType=embedded `
+    -p:PublishAot=true `
+    -p:WindowsAppSDKSelfContained=true `
+    -p:WindowsPackageType=None `
     -o $output
 
 if ($LASTEXITCODE -ne 0) {
@@ -43,5 +41,6 @@ if ($LASTEXITCODE -ne 0) {
 $exe = Join-Path $output "EqApoTray.exe"
 if (Test-Path $exe) {
     $size = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-    Write-Host "OK: $exe ($size MB)" -ForegroundColor Green
+    $totalSize = [math]::Round((Get-ChildItem $output -File -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
+    Write-Host "OK: $exe ($size MB exe, $totalSize MB total)" -ForegroundColor Green
 }

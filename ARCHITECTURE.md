@@ -8,12 +8,20 @@ Python/Tk prototype in [prototype/](prototype/).
 
 | Layer | Choice | Why |
 |---|---|---|
-| Language / runtime | C# 12, .NET 10 (`net10.0-windows`) | LTS, NativeAOT-capable, latest WPF |
-| UI framework | WPF | Stable; mature tray-icon ecosystem (WinUI 3 has no first-class tray support) |
-| Tray icon | [`H.NotifyIcon.Wpf`](https://github.com/HavenDV/H.NotifyIcon) | Active fork of `Hardcodet.NotifyIcon.Wpf`; supports `TrayPopup` flyouts |
-| Theming | [`WPF-UI`](https://github.com/lepoco/wpfui) | Win11 Fluent look (Mica-ish), modern control restyles |
-| Build | `dotnet` CLI + VS Code (no Visual Studio required) | Lighter dev loop |
-| Packaging | `dotnet publish` → single self-contained EXE (`PublishSingleFile`, optional NativeAOT later) | No runtime install on user machine |
+| Language / runtime | C# 12, .NET 10 (`net10.0-windows10.0.19041.0`) | NativeAOT-capable; required TFM for Windows App SDK |
+| UI framework | WinUI 3 (Windows App SDK 1.8.x) | First-party Win11 Fluent UI, Native-AOT compatible, system Acrylic/Mica via `SystemBackdrop` |
+| Tray icon | [`H.NotifyIcon.WinUI`](https://github.com/HavenDV/H.NotifyIcon) | Same author as the WPF variant; WinUI 3 build of the tray library |
+| Theming | Built-in WinUI 3 Fluent | No third-party theme; matches Win11 system UI exactly |
+| Build | `dotnet` CLI + VS Code | Lighter dev loop; no Visual Studio required for Debug |
+| Packaging | `dotnet publish` → unpackaged self-contained (`WindowsPackageType=None`, optional `PublishAot=true`) | No MSIX, no runtime install on user machine |
+
+### NativeAOT prerequisite
+
+`PublishAot=true` (Release builds, see `scripts/publish.ps1`) requires the
+**Visual Studio Desktop Development with C++** workload (specifically
+`link.exe` and the Windows SDK linker). Without it `dotnet publish` fails with
+"Platform linker not found" — see https://aka.ms/nativeaot-prerequisites. The
+non-AOT build (`-p:PublishAot=false`) does not need this.
 
 ## Repository layout
 
@@ -32,14 +40,17 @@ eqapo-tray/
 ├── src/EqApoTray/                   # the only application project
 │   ├── EqApoTray.csproj
 │   ├── app.manifest                 # PerMonitorV2 DPI, asInvoker, Win10/11 target
-│   ├── App.xaml(+.cs)               # entry point; owns TaskbarIcon + dialog owner
-│   ├── FlyoutControl.xaml(+.cs)     # the popup UserControl
+│   ├── App.xaml(+.cs)               # entry point; owns TaskbarIcon + FlyoutWindow
+│   ├── FlyoutWindow.xaml(+.cs)      # borderless Acrylic host window for the flyout
+│   ├── FlyoutControl.xaml(+.cs)     # the popup UserControl content
 │   └── Services/
 │       ├── EqApoConfig.cs           # read/write `Preamp: X.X dB` line
 │       ├── StartupService.cs        # HKCU\…\Run registry toggle
 │       ├── SettingsStore.cs         # JSON in %APPDATA%\EqApoTray\settings.json
+│       │                              # AOT-safe via JsonSerializerContext
 │       ├── TrayPopupPositioner.cs   # precise Shell_NotifyIconGetRect anchor
-│       └── TrayIconFactory.cs       # programmatic 32×32 tray icon
+│       └── Win32FileDialog.cs       # GetOpenFileNameW wrapper (FileOpenPicker
+│                                      # is unreliable in unpackaged WinUI 3)
 └── prototype/                       # original Python/Tk prototype (frozen)
     ├── eqapo_tray.py
     ├── eqapo-tray.spec              # PyInstaller spec
@@ -48,76 +59,144 @@ eqapo-tray/
 
 ## Module responsibilities
 
-- **`App.xaml.cs`** — `OnStartup` constructs the `TaskbarIcon` programmatically,
-  attaches a single shared `FlyoutControl` as `TrayPopup`, and builds a
-  right-click `ContextMenu` with "Quit". It also creates a hidden, long-lived
-  WPF `Window` whose HWND is used as the owner for common dialogs and message
-  boxes opened from the flyout. `ShutdownMode` is `OnExplicitShutdown`: closing
-  the flyout never exits the app; only the Quit menu item or
-  `Application.Shutdown()` does.
-- **`FlyoutControl`** — Stateless w.r.t. its host except for the injected dialog
-  owner. On `Loaded` it pulls the current `Preamp` value, autostart bit, and
-  config-path status from disk and populates the UI. The slider's
-  `ValueChanged` is debounced through a 60 ms `DispatcherTimer` to avoid
-  hammering `config.txt` (which Equalizer APO watches and reloads on each
-  change). Status dot turns red on any I/O failure.
+- **`App.xaml.cs`** — `OnLaunched` constructs the `TaskbarIcon` programmatically
+  with `ContextMenuMode = ContextMenuMode.PopupMenu` (Win32 native menu, see
+  "WinUI 3 quirks" below) and a single "退出" `MenuFlyoutItem` whose
+  `Command` (not `Click`) is wired to `QuitApplication`. `LeftClickCommand`
+  toggles `FlyoutWindow`. There is no main window and no `ShutdownMode`
+  equivalent — quit calls `Environment.Exit(0)` after disposing the tray
+  icon.
+- **`FlyoutWindow`** — Borderless WinUI 3 `Window` that hosts a single
+  `FlyoutControl`. Uses `OverlappedPresenter.Create()` with
+  `SetBorderAndTitleBar(false, false)` to strip chrome. Topmost is set
+  manually via `SetWindowPos(HWND_TOPMOST, SWP_NOACTIVATE)` after each show,
+  *not* via `OverlappedPresenter.IsAlwaysOnTop` (which triggers a focus-pull
+  bug — see "WinUI 3 quirks"). Click-outside dismiss is implemented with a
+  `WH_MOUSE_LL` low-level mouse hook installed in `ShowAt` and uninstalled in
+  `HideFlyout`; the hook callback queues `HideFlyout` via the dispatcher when
+  the cursor at click-time is outside the window's `GetWindowRect`.
+  `DesktopAcrylicBackdrop` provides the Acrylic. Positioning uses
+  `AppWindow.MoveAndResize` in physical pixels, computed from
+  `GetDpiForWindow`. A 220 ms `Storyboard` (slide-up + fade) replays on each
+  show.
+- **`FlyoutControl`** — Stateless w.r.t. its host except for the injected
+  `DialogOwnerHwnd`. On `Loaded` and on each show (via `RefreshFromDisk`,
+  called from `FlyoutWindow.ShowAt`) it pulls the current `Preamp` value,
+  autostart bit, and config-path status from disk. The slider's
+  `ValueChanged` is debounced through a 60 ms `DispatcherQueueTimer` to
+  avoid hammering `config.txt`. Track click-to-jump is implemented via
+  `PointerPressed/Moved/Released/CaptureLost` on the `Slider` itself —
+  WinUI 3's `Slider` has no public `PART_Track` template hook like WPF, so
+  pointer position is converted directly to a value via
+  `slider.ActualWidth`. Errors raise a `ContentDialog` rooted on the
+  control's `XamlRoot`. The "配置..." button calls `Win32FileDialog.PickFile`.
 - **`Services/EqApoConfig`** — Single regex (`Preamp:\s*([-\d.]+)\s*dB`)
   matches both reading and writing. Format is locked to `InvariantCulture`
   (`F1`) so a German locale doesn't write `Preamp: 3,5 dB`.
 - **`Services/StartupService`** — Writes the current process path to
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. HKCU only — no admin.
 - **`Services/SettingsStore`** — Persists the user-chosen config-file path to
-  `%APPDATA%\EqApoTray\settings.json`. The prototype put it next to the EXE,
-  which fails when the EXE lives in `Program Files`.
+  `%APPDATA%\EqApoTray\settings.json` via the `SettingsJsonContext` source
+  generator (AOT-safe; reflection-based serialization is incompatible with
+  trimmed/AOT builds).
 - **`Services/TrayPopupPositioner`** — Uses `Shell_NotifyIconGetRect` to query
   the actual notification icon rectangle, including when the icon is clicked
-  from the overflow tray. It converts physical pixels to WPF popup coordinates
-  and clamps the flyout to the current monitor work area.
-- **`Services/TrayIconFactory`** — Renders a 32×32 blue circle with "dB" text
-  via `DrawingVisual` → `RenderTargetBitmap`, then converts it to a
-  `System.Drawing.Icon` for `H.NotifyIcon`'s Win32 tray API path. `GetHicon()`
-  handles are cloned into a managed `Icon` and released with `DestroyIcon`.
-  Avoids shipping an `.ico` asset.
+  from the overflow tray. Converts physical pixels to DIPs and clamps the
+  flyout to the current monitor work area. The WinUI host re-converts back
+  to physical pixels for `AppWindow.MoveAndResize`.
+- **`Services/Win32FileDialog`** — `GetOpenFileNameW` wrapper. Replaces
+  `Windows.Storage.Pickers.FileOpenPicker`, which throws `COMException`
+  in unpackaged WinUI 3 apps under various activation-context conditions.
+  The classic dialog has no such requirements and works the same whether
+  the app is packaged or not. Filter strings use the Win32 `\0`-separated
+  format. AOT-friendly: blittable struct + `[LibraryImport]`.
 
 ## Key flows
 
-**Tray click → flyout shown.** `H.NotifyIcon` shows `TrayPopup` as a Win32
-popup window and still owns auto-close/focus behavior. The app overrides only
-the left-click activation path: built-in popup activation is disabled because
-`H.NotifyIcon.Wpf 2.1.4` does not call its own `CustomPopupPosition` delegate.
-`App.xaml.cs` handles `TrayLeftMouseUp`, asks `TrayPopupPositioner` for the real
-icon rectangle, then calls `ShowTrayPopup` with a top-left point centered above
-that rectangle. The flyout root animates in with a 500 ms slide-up + fade
-(`CubicEase` out) kicked off from `FlyoutControl.OnLoaded` via
-`BeginAnimation` — fires on every reopen because WPF re-parents a `Popup`'s
-child each time `IsOpen` flips to true. Code-behind, not an `EventTrigger`,
-because the trigger doesn't reliably fire for popup-hosted children.
+**Tray click → flyout shown.** `App.ToggleFlyout` (wired via
+`TaskbarIcon.LeftClickCommand`) asks `TrayPopupPositioner` for the real icon
+rectangle, computes the popup placement, and calls
+`FlyoutWindow.ShowAt(anchor)`. The window is moved + resized in physical
+pixels via `AppWindow.MoveAndResize`, shown with `activateWindow:true`,
+manually pinned topmost via `SetWindowPos(HWND_TOPMOST, SWP_NOACTIVATE)`,
+foregrounded via `SetForegroundWindow` (works around #7595), and the
+`WH_MOUSE_LL` mouse hook is installed. The flyout root animates in with a
+220 ms slide-up + fade via `Storyboard`, replayed on every reopen.
+
+**Click outside → flyout dismissed.** The mouse hook runs on the UI thread
+for every `WM_LBUTTONDOWN/RBUTTONDOWN/MBUTTONDOWN` system-wide. If the
+cursor is outside the window's `GetWindowRect`, the callback enqueues
+`HideFlyout` on the dispatcher (does *not* run it synchronously — see "Tray
+click toggle" below) and returns; the click still propagates to whatever
+the user actually clicked on. `HideFlyout` then `AppWindow.Hide()`s the
+window and uninstalls the hook. This bypasses WinUI 3's `Window.Activated`
+event, which is unreliable after Hide/Show cycles.
 
 **Tray click → flyout toggled.** A second click on the tray icon retracts the
-flyout. The popup uses `StaysOpen=false`, so it auto-closes on the focus loss
-that the click itself causes, *before* `TrayLeftMouseUp` reaches us — by the
-time we'd check `TrayPopupResolved.IsOpen` it's already false. We hook
-`Popup.Closed` to record the close time (`Environment.TickCount64`); a
-left-click arriving within 120 ms is treated as that same toggle-off click
-and suppressed. The timestamp is consumed on first use so a rapid second
-click reopens immediately instead of being eaten by the same window.
+flyout. The mouse hook fires first (the click is outside the flyout's rect),
+enqueueing `HideFlyout`. The OS message then propagates to the tray icon and
+H.NotifyIcon raises `LeftClickCommand` — but `LeftClickCommand` runs
+synchronously *before* the dispatcher gets to drain its queue, so
+`ToggleFlyout` reads `IsOpen == true` and synchronously calls `HideFlyout`
+itself. The queued copy from the hook runs second, sees `IsOpen == false`,
+and no-ops via the guard. Net effect: a single, reliable close. The
+deferred-via-dispatcher pattern is what makes this race-free; an Activated
+event handler that ran `HideFlyout` synchronously would set `IsOpen = false`
+before `ToggleFlyout` could read it, and the second click would silently
+reopen.
 
-**Config picker → common dialog.** The "配置..." button opens
-`OpenFileDialog` with the hidden owner window from `App.xaml.cs`. Do not call
-`ShowDialog()` without an explicit owner from inside the `TrayPopup`: the
-popup host auto-closes when it loses focus, and if WPF chooses that transient
-popup window as the owner, the file dialog can be closed immediately with it.
+**Config picker → Win32 GetOpenFileNameW.** The "配置..." button calls
+`Win32FileDialog.PickFile(DialogOwnerHwnd, …)`, which marshals the dialog
+title and `\0`-separated filter into native heap, invokes
+`comdlg32.GetOpenFileNameW`, and reads the returned path back. The dialog's
+own message pump runs while it's modal; the flyout deactivates and the
+mouse hook inevitably hides it (clicking inside the file dialog is "outside"
+our flyout). After picking, the new path is saved and the user re-clicks
+the tray to see the refreshed UI — same UX shape as the WPF prototype.
 
 **Slider drag → file write.** Each `ValueChanged` resets a 60 ms timer; on
 tick we write the new `Preamp` line atomically (full read-modify-write of
 `config.txt`). The status dot colour reflects the last write outcome. If the
 file is missing or unwritable (typical when EqAPO is in `Program Files` and
 the app runs without elevation), the dot turns red and we surface the error
-visually rather than silently swallowing it — that's an upgrade over the
-Python version.
+visually rather than silently swallowing it.
 
-**Startup checkbox → registry.** Direct, synchronous; failure raises a
-`MessageBox` and reverts the checkbox.
+**Startup checkbox → registry.** Direct, synchronous. Failure raises a
+`ContentDialog` (WinUI 3) rooted on the control's `XamlRoot`, and the
+checkbox is reverted to the actual registry state.
+
+## WinUI 3 quirks worked around
+
+These are *not* general WinUI 3 patterns to copy elsewhere — they are
+defensive workarounds for behaviour that is broken or unsupported in the
+specific configuration this app uses (unpackaged, single reused `Window`,
+no main window). Removing them will reproduce the original bug.
+
+- **`OverlappedPresenter.IsAlwaysOnTop = true` triggers a focus-pull bug**
+  ([microsoft-ui-xaml#9990](https://github.com/microsoft/microsoft-ui-xaml/issues/9990)).
+  After the first `AppWindow.Hide()`+`Show()` cycle the window's activation
+  state machine sticks: clicking outside briefly transfers focus (visible as
+  a one-frame desktop-icon flicker) but is immediately yanked back, so
+  `WM_ACTIVATE WA_INACTIVE` is never delivered — even a raw
+  `comctl32.SetWindowSubclass` doesn't see it. We use raw
+  `SetWindowPos(HWND_TOPMOST, SWP_NOACTIVATE)` instead, which is bug-free.
+- **`Window.Activated` / `WM_ACTIVATE` are unreliable for click-outside
+  dismiss** in this scenario, by extension of the same bug. The mouse hook
+  is the only mechanism that works on every cycle. It's a global
+  `WH_MOUSE_LL` hook but installed only while the flyout is visible, so
+  the system-wide cost is negligible.
+- **Programmatic `TaskbarIcon` has no `XamlRoot`**, so the default
+  `ContextMenuMode = SecondWindow` silently drops `MenuFlyoutItem.Click`
+  events. We use `ContextMenuMode = ContextMenuMode.PopupMenu` (native
+  Win32 menu) which dispatches via `Command` instead — see
+  [`TaskbarIcon.ContextMenu.WinRT.PopupMenu.cs PopulateMenu`](https://github.com/HavenDV/H.NotifyIcon/blob/master/src/libs/H.NotifyIcon.Shared/TaskbarIcon.ContextMenu.WinRT.PopupMenu.cs).
+- **`Windows.Storage.Pickers.FileOpenPicker` throws `COMException` in
+  unpackaged apps** under various activation-context conditions. We use a
+  `comdlg32.GetOpenFileNameW` wrapper (`Services/Win32FileDialog`) which
+  has no such requirement.
+- **`Application.Current.Exit()` doesn't reliably terminate** a tray-only
+  app (no main window for the WinUI lifetime to hang off). The Quit menu
+  uses `_trayIcon.Dispose()` + `Environment.Exit(0)`.
 
 ## Conventions / invariants
 
@@ -127,16 +206,19 @@ Python version.
 - **Threading:** all UI work stays on the dispatcher thread. There's no
   background work that needs `Task.Run` yet; if file I/O ever moves async,
   watch for re-entrancy on the slider event.
-- **Tray icon type:** `TaskbarIcon.Icon` gets a `System.Drawing.Icon`, not the
-  WPF `IconSource` path. Any unmanaged HICON produced by `GetHicon()` must be
-  cloned into a managed `Icon` before the original handle is released with
-  `DestroyIcon`. The project enables `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`
-  only because the `[LibraryImport]` source generator emits unsafe marshalling
-  code for that P/Invoke.
-- **Dialog ownership:** common dialogs and message boxes launched from the
-  tray flyout use the hidden owner window created at startup. Avoid ownerless
-  `ShowDialog()` calls in `FlyoutControl`; they can bind to the transient
-  `TrayPopup` host and vanish when the popup auto-closes.
+- **Tray icon source:** `H.NotifyIcon.WinUI` exposes `IconSource` (XAML
+  `IconSource`) which the library converts to a `System.Drawing.Icon`
+  internally. The icon is intentionally left unset right now — see "Known
+  constraints / future work" — so the tray entry registers without an image
+  while a custom icon design is pending. The project enables
+  `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` only because the
+  `[LibraryImport]` source generator emits unsafe marshalling code for the
+  P/Invokes in `TrayPopupPositioner`, `FlyoutWindow`, and `Win32FileDialog`.
+- **Dialog ownership:** `Win32FileDialog` and `ContentDialog` both need an
+  owner. `FlyoutControl.DialogOwnerHwnd` is set by `FlyoutWindow` at
+  construction time and used as the file dialog's `hwndOwner`; the
+  `XamlRoot` for `ContentDialog` is the `UserControl`'s own `XamlRoot`. Do
+  not call `FileOpenPicker.PickSingleFileAsync` — see "WinUI 3 quirks".
 - **No MVVM framework.** The app is small enough that code-behind is
   honest and shorter than wiring up `INotifyPropertyChanged` plumbing.
   Don't add CommunityToolkit.Mvvm for the sake of it.
@@ -153,13 +235,13 @@ Python version.
 # First time
 dotnet restore EqApoTray.sln
 
-# Dev loop (hot reload via dotnet watch)
-dotnet watch --project src/EqApoTray run
-# or VS Code task "watch", or F5 for debugger attach
+# Dev loop
+dotnet build src/EqApoTray/EqApoTray.csproj
+# or VS Code task "build" (Ctrl+Shift+B), or F5 for debugger attach
 
-# Release single-file
+# Release Native AOT (requires VS C++ Desktop workload, see Stack > NativeAOT)
 pwsh scripts/publish.ps1
-# → dist/EqApoTray-win-x64/EqApoTray.exe (~30–40 MB self-contained)
+# → dist/EqApoTray-win-x64/EqApoTray.exe + WindowsAppSDK runtime DLLs
 ```
 
 VS Code tasks (`.vscode/tasks.json`): `build` (default, Ctrl+Shift+B),
@@ -172,14 +254,25 @@ C# Dev Kit + C#.
   reloads on each write. Rapid writes are fine in practice (debounced to
   60 ms) but tearing is possible on slow disks — if it shows up, switch to
   write-temp-then-rename.
-- **NativeAOT.** WPF + AOT is supported in .NET 8+ but with caveats (XAML
-  reflection, some package incompatibilities). Worth revisiting once
-  `WPF-UI` and `H.NotifyIcon.Wpf` declare AOT compatibility — would shrink
-  the EXE from ~35 MB to ~15 MB.
-- **Theming.** Currently hard-coded to Light via `ThemesDictionary Theme="Light"`,
-  with `ApplicationThemeManager.ApplySystemTheme()` called at startup. If the
-  user's system theme changes at runtime, we don't react — fix by subscribing
-  to `SystemEvents.UserPreferenceChanged`.
+- **Tray icon image.** `App.OnLaunched` does not set
+  `TaskbarIcon.IconSource`; the library still registers the tray entry but
+  it has no image. Custom icon work is deferred — drop in either an `.ico`
+  asset (`<Content Include="Assets/tray.ico" />`) and assign
+  `IconSource = new BitmapImage(new Uri(...))`, or use H.NotifyIcon's
+  `GeneratedIcon` for a code-rendered icon.
+- **WindowsAppSDK self-contained size.** `WindowsAppSDKSelfContained=true`
+  drags in transitive AI/ML runtimes (`onnxruntime.dll`, `DirectML.dll`,
+  `Microsoft.Windows.SDK.NET.dll`) totaling ~140 MB. WASDK 1.6 had a much
+  smaller footprint but is incompatible with .NET 10 (`Microsoft.Build.Packaging.Pri.Tasks`
+  load failure). Two paths if size becomes a real issue: (a) set
+  `WindowsAppSDKSelfContained=false` and require users to install the WASDK
+  runtime separately, or (b) post-publish-strip the AI/ML DLLs that we
+  never load.
+- **NativeAOT prerequisite.** `PublishAot=true` needs `link.exe` from the
+  Visual Studio C++ Desktop workload. CI/local builds without it fall back
+  to JIT publish via `-p:PublishAot=false`.
+- **Theming.** WinUI 3 follows the system theme automatically through the
+  default `XamlControlsResources` — no manual theme switch needed.
 
 ## What lives in `prototype/`
 

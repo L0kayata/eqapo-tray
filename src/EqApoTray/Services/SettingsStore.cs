@@ -1,11 +1,18 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace EqApoTray.Services;
 
 public class Settings
 {
     public string ConfigPath { get; set; } = @"C:\Program Files\EqualizerAPO\config\config.txt";
+}
+
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(Settings))]
+internal partial class SettingsJsonContext : JsonSerializerContext
+{
 }
 
 public static class SettingsStore
@@ -16,11 +23,6 @@ public static class SettingsStore
 
     private static readonly string FilePath = Path.Combine(Dir, "settings.json");
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-    };
-
     public static Settings Load()
     {
         try
@@ -28,7 +30,7 @@ public static class SettingsStore
             if (File.Exists(FilePath))
             {
                 var json = File.ReadAllText(FilePath);
-                var s = JsonSerializer.Deserialize<Settings>(json);
+                var s = JsonSerializer.Deserialize(json, SettingsJsonContext.Default.Settings);
                 if (s is not null) return s;
             }
         }
@@ -42,7 +44,7 @@ public static class SettingsStore
     public static void Save(Settings settings)
     {
         Directory.CreateDirectory(Dir);
-        var json = JsonSerializer.Serialize(settings, JsonOptions);
+        var json = JsonSerializer.Serialize(settings, SettingsJsonContext.Default.Settings);
         File.WriteAllText(FilePath, json);
     }
 }

@@ -1,176 +1,113 @@
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Interop;
 using EqApoTray.Services;
 using H.NotifyIcon;
-using H.NotifyIcon.Core;
-using Wpf.Ui.Appearance;
-using DrawingPoint = System.Drawing.Point;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 
 namespace EqApoTray;
 
 public partial class App : Application
 {
-    // The popup auto-closes on focus loss before TrayLeftMouseUp fires, so the click
-    // that *triggered* the close arrives at us with the popup already closed. We
-    // suppress that single click; the window only needs to cover normal message-pump
-    // latency between Popup.Closed and our handler — kept small so rapid reopen
-    // clicks aren't blocked.
-    private static readonly TimeSpan ReopenSuppressWindow = TimeSpan.FromMilliseconds(120);
-
     private TaskbarIcon? _trayIcon;
-    private FlyoutControl? _flyout;
-    private Window? _dialogOwnerWindow;
-    private long _lastPopupCloseTicks;
-    private bool _popupClosedHandlerAttached;
+    private FlyoutWindow? _flyoutWindow;
 
-    private void OnStartup(object sender, StartupEventArgs e)
+    public App()
     {
-        ApplicationThemeManager.ApplySystemTheme(updateAccent: true);
+        InitializeComponent();
+    }
 
-        _dialogOwnerWindow = CreateDialogOwnerWindow();
-        _flyout = new FlyoutControl(_dialogOwnerWindow);
+    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    {
+        _flyoutWindow = new FlyoutWindow();
 
+        // ContextMenuMode.PopupMenu renders the right-click menu as a native
+        // Win32 popup menu. The default SecondWindow mode would need the
+        // TaskbarIcon to live in a XAML tree with a valid XamlRoot — we create
+        // it programmatically with none, so MenuFlyoutItem clicks never route.
+        // PopupMenu mode also dispatches via Command (not Click); see
+        // BuildContextMenu.
         _trayIcon = new TaskbarIcon
         {
-            Icon = TrayIconFactory.Create(),
             ToolTipText = "EqAPO Tray",
-            TrayPopup = _flyout,
-            PopupPlacement = PlacementMode.AbsolutePoint,
-            PopupActivation = PopupActivationMode.None,
-            ContextMenu = BuildContextMenu(),
+            ContextMenuMode = ContextMenuMode.PopupMenu,
+            ContextFlyout = BuildContextMenu(),
+            NoLeftClickDelay = true,
+            LeftClickCommand = new RelayCommand(ToggleFlyout),
         };
-        _trayIcon.TrayLeftMouseUp += OnTrayLeftMouseUp;
-        _trayIcon.TrayPopupOpen += OnTrayPopupOpen;
         _trayIcon.ForceCreate();
     }
 
-    private ContextMenu BuildContextMenu()
+    private MenuFlyout BuildContextMenu()
     {
-        var menu = new ContextMenu();
-        var quitItem = new MenuItem { Header = "退出" };
-        quitItem.Click += (_, _) => Shutdown();
+        var menu = new MenuFlyout();
+        // ContextMenuMode.PopupMenu translates each MenuFlyoutItem into a Win32
+        // popup menu item. The library raises the *Command*, not the *Click*
+        // event — confirmed in H.NotifyIcon source
+        // (TaskbarIcon.ContextMenu.WinRT.PopupMenu.cs PopulateMenu). Wiring
+        // Click here would silently do nothing.
+        var quitItem = new MenuFlyoutItem
+        {
+            Text = "退出",
+            Command = new RelayCommand(QuitApplication),
+        };
         menu.Items.Add(quitItem);
         return menu;
     }
 
-    private void OnTrayLeftMouseUp(object sender, RoutedEventArgs e)
+    private void QuitApplication()
     {
-        if (_trayIcon is null)
+        try
+        {
+            _trayIcon?.Dispose();
+        }
+        catch
+        {
+            // Best-effort cleanup; we're tearing down the process anyway.
+        }
+        Environment.Exit(0);
+    }
+
+    private void ToggleFlyout()
+    {
+        if (_flyoutWindow is null)
         {
             return;
         }
 
-        if (_trayIcon.TrayPopupResolved?.IsOpen == true)
+        if (_flyoutWindow.IsOpen)
         {
-            _trayIcon.CloseTrayPopup();
+            _flyoutWindow.HideFlyout();
             return;
         }
 
-        if (_lastPopupCloseTicks > 0)
+        var anchor = TryGetAnchorBounds();
+        _flyoutWindow.ShowAt(anchor);
+    }
+
+    private TrayPopupPositioner.ScreenBounds TryGetAnchorBounds()
+    {
+        if (_trayIcon is not null && TrayPopupPositioner.TryGetTrayIconBounds(_trayIcon, out var anchor))
         {
-            var sinceClose = TimeSpan.FromMilliseconds(Environment.TickCount64 - _lastPopupCloseTicks);
-            // Consume on first use: only the click that caused the close gets eaten.
-            // A second rapid click is the user asking to reopen.
-            _lastPopupCloseTicks = 0;
-            if (sinceClose < ReopenSuppressWindow)
-            {
-                return;
-            }
+            return anchor;
         }
 
-        _trayIcon.ShowTrayPopup(GetFlyoutPosition());
-    }
-
-    private void OnTrayPopupOpen(object sender, RoutedEventArgs e)
-    {
-        if (_popupClosedHandlerAttached || _trayIcon?.TrayPopupResolved is not { } popup)
+        if (TrayPopupPositioner.TryGetCursorFallbackBounds(out anchor))
         {
-            return;
+            return anchor;
         }
 
-        popup.Closed += (_, _) => _lastPopupCloseTicks = Environment.TickCount64;
-        _popupClosedHandlerAttached = true;
+        return default;
     }
 
-    private DrawingPoint GetFlyoutPosition()
+    private sealed partial class RelayCommand(Action execute) : System.Windows.Input.ICommand
     {
-        var popupSize = MeasureFlyout();
-        if (!TryGetAnchorBounds(out var anchor))
+        public event EventHandler? CanExecuteChanged
         {
-            return DrawingPoint.Empty;
+            add { }
+            remove { }
         }
 
-        const double gap = 8;
-        const double edgePadding = 6;
+        public bool CanExecute(object? parameter) => true;
 
-        var left = anchor.Left + (anchor.Width - popupSize.Width) / 2;
-        var top = anchor.Top - popupSize.Height - gap;
-
-        if (top < anchor.WorkTop + edgePadding)
-        {
-            top = anchor.Bottom + gap;
-        }
-
-        left = Clamp(left, anchor.WorkLeft + edgePadding, anchor.WorkRight - popupSize.Width - edgePadding);
-        top = Clamp(top, anchor.WorkTop + edgePadding, anchor.WorkBottom - popupSize.Height - edgePadding);
-
-        return new DrawingPoint((int)Math.Round(left), (int)Math.Round(top));
-    }
-
-    private bool TryGetAnchorBounds(out TrayPopupPositioner.ScreenBounds anchor)
-    {
-        if (_trayIcon is not null && TrayPopupPositioner.TryGetTrayIconBounds(_trayIcon, out anchor))
-        {
-            return true;
-        }
-
-        return TrayPopupPositioner.TryGetCursorFallbackBounds(out anchor);
-    }
-
-    private Size MeasureFlyout()
-    {
-        if (_flyout is null)
-        {
-            return new Size(340, 180);
-        }
-
-        _flyout.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-
-        var width = _flyout.ActualWidth > 0 ? _flyout.ActualWidth : _flyout.DesiredSize.Width;
-        var height = _flyout.ActualHeight > 0 ? _flyout.ActualHeight : _flyout.DesiredSize.Height;
-
-        return new Size(width, height);
-    }
-
-    private static double Clamp(double value, double min, double max)
-    {
-        return max < min ? min : Math.Min(Math.Max(value, min), max);
-    }
-
-    private static Window CreateDialogOwnerWindow()
-    {
-        // Common dialogs need an owner that outlives H.NotifyIcon's transient TrayPopup window.
-        var window = new Window
-        {
-            Width = 0,
-            Height = 0,
-            Left = -32000,
-            Top = -32000,
-            WindowStyle = WindowStyle.None,
-            ResizeMode = ResizeMode.NoResize,
-            ShowActivated = false,
-            ShowInTaskbar = false,
-        };
-
-        _ = new WindowInteropHelper(window).EnsureHandle();
-        return window;
-    }
-
-    private void OnExit(object sender, ExitEventArgs e)
-    {
-        _trayIcon?.Dispose();
-        _dialogOwnerWindow?.Close();
+        public void Execute(object? parameter) => execute();
     }
 }
