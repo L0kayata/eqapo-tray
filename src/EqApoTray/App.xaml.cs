@@ -1,5 +1,6 @@
 using EqApoTray.Services;
 using H.NotifyIcon;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -8,6 +9,7 @@ namespace EqApoTray;
 public partial class App : Application
 {
     private TaskbarIcon? _trayIcon;
+    private TrayIconController? _iconController;
     private FlyoutWindow? _flyoutWindow;
 
     public App()
@@ -33,7 +35,26 @@ public partial class App : Application
             NoLeftClickDelay = true,
             LeftClickCommand = new RelayCommand(ToggleFlyout),
         };
+        // Assign IconSource before ForceCreate so Shell registers the tray
+        // entry with the correct icon on the first frame (no default-icon
+        // flash).
+        _iconController = new TrayIconController(_trayIcon, DispatcherQueue.GetForCurrentThread());
+        _iconController.Initialize(TryReadInitialDb());
         _trayIcon.ForceCreate();
+    }
+
+    public void NotifyDbChanged(double db) => _iconController?.OnDbChanged(db);
+
+    private static double TryReadInitialDb()
+    {
+        try
+        {
+            return EqApoConfig.Read(SettingsStore.Load().ConfigPath);
+        }
+        catch
+        {
+            return 0.0;
+        }
     }
 
     private MenuFlyout BuildContextMenu()
@@ -57,6 +78,7 @@ public partial class App : Application
     {
         try
         {
+            _iconController?.Dispose();
             _trayIcon?.Dispose();
         }
         catch

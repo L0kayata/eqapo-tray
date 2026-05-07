@@ -219,9 +219,16 @@ no main window). Removing them will reproduce the original bug.
   watch for re-entrancy on the slider event.
 - **Tray icon source:** `H.NotifyIcon.WinUI` exposes `IconSource` (XAML
   `IconSource`) which the library converts to a `System.Drawing.Icon`
-  internally. The icon is intentionally left unset right now — see "Known
-  constraints / future work" — so the tray entry registers without an image
-  while a custom icon design is pending. The project enables
+  internally. `TrayIconController` owns this property: it caches up to ten
+  `BitmapIconSource` instances (5 dB-state buckets × 2 system themes) loaded
+  from `Assets/Tray/{light,dark}/state-{-2..2}.ico` via `file:///` URIs
+  resolved against `AppContext.BaseDirectory`. State changes flow from
+  `FlyoutControl.GainSlider_ValueChanged` →
+  `App.NotifyDbChanged` → `TrayIconController.OnDbChanged`; theme changes
+  arrive via `UISettings.ColorValuesChanged` (a non-UI thread, marshalled
+  back through `DispatcherQueue.TryEnqueue`). Reassigning `IconSource`
+  takes the library's `NIM_MODIFY` path — the tray entry stays registered
+  and only the `hIcon` is swapped. The project enables
   `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` only because the
   `[LibraryImport]` source generator emits unsafe marshalling code for the
   P/Invokes in `TrayPopupPositioner`, `FlyoutWindow`, and `Win32FileDialog`.
@@ -276,12 +283,17 @@ C# Dev Kit + C#.
   reloads on each write. Rapid writes are fine in practice (debounced to
   60 ms) but tearing is possible on slow disks — if it shows up, switch to
   write-temp-then-rename.
-- **Tray icon image.** `App.OnLaunched` does not set
-  `TaskbarIcon.IconSource`; the library still registers the tray entry but
-  it has no image. Custom icon work is deferred — drop in either an `.ico`
-  asset (`<Content Include="Assets/tray.ico" />`) and assign
-  `IconSource = new BitmapImage(new Uri(...))`, or use H.NotifyIcon's
-  `GeneratedIcon` for a code-rendered icon.
+- **Tray icon assets.** The 10 ICO files under `src/EqApoTray/Assets/Tray/`
+  (`light/state-{-2..2}.ico` and `dark/state-{-2..2}.ico`) must be authored
+  by hand. Each ICO embeds 16/20/24/32 ARGB frames so Shell can pick the
+  right size per DPI scale. `light/` uses near-black speaker strokes,
+  `dark/` near-white; the two arcs use red `#D13438` / blue `#1F77E0` or
+  the neutral stroke colour according to `TrayIconState`. The `.gitkeep`
+  files in those directories are committed so a fresh clone has the
+  layout in place; the build's `<Content Include="Assets\Tray\...\*.ico">`
+  glob silently expands to zero items if the artist has not delivered yet,
+  which is fine — `BitmapIconSource` for a missing URI fails open and the
+  tray simply has no image until the assets land.
 - **WindowsAppSDK self-contained size.** `WindowsAppSDKSelfContained=true`
   drags in transitive AI/ML runtimes (`onnxruntime.dll`, `DirectML.dll`,
   `Microsoft.Windows.AI.*`, Imaging, Workloads, `NpuDetect/`),
