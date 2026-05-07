@@ -197,6 +197,17 @@ no main window). Removing them will reproduce the original bug.
 - **`Application.Current.Exit()` doesn't reliably terminate** a tray-only
   app (no main window for the WinUI lifetime to hang off). The Quit menu
   uses `_trayIcon.Dispose()` + `Environment.Exit(0)`.
+- **`dotnet publish` drops the XAML/MRT artifacts** for unpackaged WinUI 3.
+  The XAML compiler writes `*.xbf` to `obj\<Config>\<TFM>\<RID>\` and the
+  resource index `<AssemblyName>.pri` to `bin\<Config>\<TFM>\<RID>\`, but
+  neither is added to `ResolvedFileToPublish`, so they never reach the
+  publish output. Without them `Microsoft.UI.Xaml.dll` throws a stowed
+  exception (Windows Error Reporting hash `0xc000027b`, faulting module
+  `Microsoft.UI.Xaml.dll`) at process start because `InitializeComponent()`
+  can't resolve `App.xaml`. The csproj has a `_IncludeWinUIArtifactsInPublish`
+  target that injects both file sets before `ComputeFilesToPublish`. Affects
+  both AOT and non-AOT publish; running the bin output directly is
+  unaffected because the build already lays the files next to the exe.
 
 ## Conventions / invariants
 
@@ -241,8 +252,19 @@ dotnet build src/EqApoTray/EqApoTray.csproj
 
 # Release Native AOT (requires VS C++ Desktop workload, see Stack > NativeAOT)
 pwsh scripts/publish.ps1
-# → dist/EqApoTray-win-x64/EqApoTray.exe + WindowsAppSDK runtime DLLs
+# → dist/EqApoTray-win-x64/                  staging directory (unzipped)
+#   dist/EqApoTray-v<Version>-win-x64.zip    GitHub release artifact
+#   dist/SHA256SUMS.txt                      GitHub release artifact
 ```
+
+`publish.ps1` runs four steps: (1) `dotnet publish` AOT/self-contained
+into the staging directory, (2) strip components this app does not load
+(AI/ML stack, Widgets, WebView2, `*.pdb`, and locale `*.mui` folders
+other than `zh-CN`/`en-us` — see "Known constraints" below; net result
+~60 MB unzipped, ~30 MB zipped), (3) zip the staging directory,
+(4) write `SHA256SUMS.txt`. The zip filename's version comes from
+`<Version>` in `EqApoTray.csproj`, which is the single source of truth
+— bump it once and tag the git commit with the matching `v<Version>`.
 
 VS Code tasks (`.vscode/tasks.json`): `build` (default, Ctrl+Shift+B),
 `watch`, `publish`. Recommended extensions in `.vscode/extensions.json`:
@@ -262,12 +284,25 @@ C# Dev Kit + C#.
   `GeneratedIcon` for a code-rendered icon.
 - **WindowsAppSDK self-contained size.** `WindowsAppSDKSelfContained=true`
   drags in transitive AI/ML runtimes (`onnxruntime.dll`, `DirectML.dll`,
-  `Microsoft.Windows.SDK.NET.dll`) totaling ~140 MB. WASDK 1.6 had a much
-  smaller footprint but is incompatible with .NET 10 (`Microsoft.Build.Packaging.Pri.Tasks`
-  load failure). Two paths if size becomes a real issue: (a) set
-  `WindowsAppSDKSelfContained=false` and require users to install the WASDK
-  runtime separately, or (b) post-publish-strip the AI/ML DLLs that we
-  never load.
+  `Microsoft.Windows.AI.*`, Imaging, Workloads, `NpuDetect/`),
+  `Microsoft.Windows.Widgets`, WebView2, and `WinUIEdit`, totalling
+  ~150 MB raw. WASDK 1.6 had a much smaller footprint but is
+  incompatible with .NET 10 (`Microsoft.Build.Packaging.Pri.Tasks` load
+  failure). `publish.ps1` works around it with a post-publish strip
+  (~150 MB raw → ~60 MB unzipped, ~30 MB zipped): see
+  `$stripFilePatterns` / `$stripDirs` / `$keepLocales` in the script.
+  Anything that touches XAML, composition, MRT, or the
+  WindowsAppRuntime bootstrap chain is **not** stripped — if a future
+  feature needs Widgets / WebView2 / AI / a different locale, drop the
+  matching pattern from the strip list rather than disabling the strip
+  wholesale. **Landmine:** `WinUIEdit.dll` looks like dead weight
+  (this app has no `RichEditBox`) but WinUI 3 crashes at startup
+  without it on WASDK 1.8. It is *not* in the strip list and the
+  publish script carries an explicit comment to keep curious
+  maintainers from "tidying" it up. The alternative path
+  (`WindowsAppSDKSelfContained=false`, user installs Windows App
+  Runtime separately) is rejected because the ~30 MB runtime
+  installer is a worse UX than a fatter zip.
 - **NativeAOT prerequisite.** `PublishAot=true` needs `link.exe` from the
   Visual Studio C++ Desktop workload. CI/local builds without it fall back
   to JIT publish via `-p:PublishAot=false`.

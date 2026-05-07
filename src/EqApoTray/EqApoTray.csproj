@@ -30,4 +30,32 @@
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
   </ItemGroup>
 
+  <!--
+    WinUI 3 unpackaged + Publish workaround: the SDK does not add the XAML
+    compiled binaries (*.xbf) or the MRT resource index (<App>.pri) to the
+    publish output. Without them Microsoft.UI.Xaml.dll throws a stowed
+    exception (0xc000027b) at startup because InitializeComponent() can't
+    locate App.xaml resources. This affects both AOT and non-AOT publish.
+  -->
+  <Target Name="_IncludeWinUIArtifactsInPublish" BeforeTargets="ComputeFilesToPublish">
+    <!-- Two-pass evaluation: collect first, then attach metadata. A single
+         ItemGroup with a wildcard inside Include did not expand reliably
+         under `dotnet publish` for this SDK + AOT combination. -->
+    <ItemGroup>
+      <_WinUIXbfToPublish Include="$(IntermediateOutputPath)**\*.xbf" />
+      <_WinUIPriToPublish Include="$(OutputPath)$(AssemblyName).pri" Condition="Exists('$(OutputPath)$(AssemblyName).pri')" />
+    </ItemGroup>
+    <Message Text="WinUI publish artifacts: xbf=@(_WinUIXbfToPublish->Count()) pri=@(_WinUIPriToPublish->Count())" Importance="high" />
+    <ItemGroup>
+      <ResolvedFileToPublish Include="@(_WinUIXbfToPublish)">
+        <RelativePath>%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+      <ResolvedFileToPublish Include="@(_WinUIPriToPublish)">
+        <RelativePath>%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
 </Project>
