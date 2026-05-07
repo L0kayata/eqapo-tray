@@ -30,6 +30,15 @@
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Assets\Tray\light\*.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Tray\dark\*.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <!--
     WinUI 3 unpackaged + Publish workaround: the SDK does not add the XAML
     compiled binaries (*.xbf) or the MRT resource index (<App>.pri) to the

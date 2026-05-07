@@ -218,6 +218,10 @@ public partial class FlyoutControl : UserControl
     private void GainSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         UpdateGainLabel(e.NewValue);
+        // Tray icon must reflect the visible value even when _suppressEvents is
+        // set (RefreshFromDisk pushes the disk value into the slider with that
+        // flag on); icon swap is sub-ms and does not touch disk.
+        ((App)Application.Current).NotifyDbChanged(e.NewValue);
         if (_suppressEvents) return;
 
         _pendingValue = e.NewValue;
