@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="StartupCheck.Content" xml:space="preserve">
+    <value>开机自启动</value>
+  </data>
+  <data name="StatusDot.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>配置文件状态</value>
+  </data>
+  <data name="BrowseButton.Content" xml:space="preserve">
+    <value>配置...</value>
+  </data>
+  <data name="TrayMenuExit" xml:space="preserve">
+    <value>退出</value>
+  </data>
+  <data name="StatusLoadedToolTip" xml:space="preserve">
+    <value>配置文件已加载</value>
+  </data>
+  <data name="StatusErrorToolTip" xml:space="preserve">
+    <value>无法读写配置文件（路径不存在或权限不足）</value>
+  </data>
+  <data name="StartupErrorTitle" xml:space="preserve">
+    <value>无法修改开机自启</value>
+  </data>
+  <data name="DialogOk" xml:space="preserve">
+    <value>确定</value>
+  </data>
+  <data name="BrowseDialogTitle" xml:space="preserve">
+    <value>选择 Equalizer APO 配置文件</value>
+  </data>
+  <data name="FileFilterConfig" xml:space="preserve">
+    <value>Equalizer APO 配置文件</value>
+  </data>
+  <data name="FileFilterAll" xml:space="preserve">
+    <value>所有文件</value>
+  </data>
+  <data name="RunKeyAccessError" xml:space="preserve">
+    <value>无法访问 HKCU\...\Run 注册表项</value>
+  </data>
+  <data name="ExePathError" xml:space="preserve">
+    <value>无法解析当前可执行文件路径</value>
+  </data>
+</root>

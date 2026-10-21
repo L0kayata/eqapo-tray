@@ -17,12 +17,12 @@ public static class StartupService
     {
         using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true)
             ?? Registry.CurrentUser.CreateSubKey(RunKey)
-            ?? throw new InvalidOperationException("无法访问 HKCU\\...\\Run 注册表项");
+            ?? throw new InvalidOperationException(Strings.Get("RunKeyAccessError"));
 
         if (enable)
         {
             var exe = Environment.ProcessPath
-                ?? throw new InvalidOperationException("无法解析当前可执行文件路径");
+                ?? throw new InvalidOperationException(Strings.Get("ExePathError"));
             key.SetValue(AppName, $"\"{exe}\"", RegistryValueKind.String);
         }
         else

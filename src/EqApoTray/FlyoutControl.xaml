@@ -20,7 +20,7 @@
 
             <CheckBox Grid.Column="0"
                       x:Name="StartupCheck"
-                      Content="开机自启动"
+                      x:Uid="StartupCheck"
                       VerticalAlignment="Center"
                       Checked="StartupCheck_Toggled"
                       Unchecked="StartupCheck_Toggled" />
@@ -31,11 +31,11 @@
                      Margin="0,0,8,0"
                      VerticalAlignment="Center"
                      Fill="Gray"
-                     ToolTipService.ToolTip="配置文件状态" />
+                     x:Uid="StatusDot" />
 
             <Button Grid.Column="2"
                     x:Name="BrowseButton"
-                    Content="配置..."
+                    x:Uid="BrowseButton"
                     Click="BrowseConfig_Click" />
         </Grid>
 

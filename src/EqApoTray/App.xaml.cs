@@ -45,7 +45,7 @@ public partial class App : Application
             {
                 Items =
                 {
-                    new PopupMenuItem("退出", (_, _) => QuitApplication()),
+                    new PopupMenuItem(Strings.Get("TrayMenuExit"), (_, _) => QuitApplication()),
                 },
             },
         };

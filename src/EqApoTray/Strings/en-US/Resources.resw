@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="StartupCheck.Content" xml:space="preserve">
+    <value>Run at startup</value>
+  </data>
+  <data name="StatusDot.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Config file status</value>
+  </data>
+  <data name="BrowseButton.Content" xml:space="preserve">
+    <value>Config...</value>
+  </data>
+  <data name="TrayMenuExit" xml:space="preserve">
+    <value>Exit</value>
+  </data>
+  <data name="StatusLoadedToolTip" xml:space="preserve">
+    <value>Config file loaded</value>
+  </data>
+  <data name="StatusErrorToolTip" xml:space="preserve">
+    <value>Can't read or write the config file (missing path or no permission)</value>
+  </data>
+  <data name="StartupErrorTitle" xml:space="preserve">
+    <value>Couldn't change the startup setting</value>
+  </data>
+  <data name="DialogOk" xml:space="preserve">
+    <value>OK</value>
+  </data>
+  <data name="BrowseDialogTitle" xml:space="preserve">
+    <value>Select Equalizer APO config file</value>
+  </data>
+  <data name="FileFilterConfig" xml:space="preserve">
+    <value>Equalizer APO config file</value>
+  </data>
+  <data name="FileFilterAll" xml:space="preserve">
+    <value>All files</value>
+  </data>
+  <data name="RunKeyAccessError" xml:space="preserve">
+    <value>Can't access the HKCU\...\Run registry key</value>
+  </data>
+  <data name="ExePathError" xml:space="preserve">
+    <value>Can't resolve the current executable path</value>
+  </data>
+</root>

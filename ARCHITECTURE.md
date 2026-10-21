@@ -56,9 +56,11 @@ eqapo-tray/
 │   ├── Assets/TrayIcons/            # speaker_{0,1,2}_{light,dark}.ico (generated,
 │   │                                  # embedded as manifest resources)
 │   ├── Assets/AppIcon.ico           # the exe's Win32 icon (generated)
+│   ├── Strings/{zh-CN,en-US}/Resources.resw  # UI strings (x:Uid + Services/Strings)
 │   └── Services/
 │       ├── EqApoConfig.cs           # read/write `Preamp: X.X dB` line
 │       ├── StartupService.cs        # HKCU\…\Run registry toggle
+│       ├── Strings.cs               # MRT Core ResourceLoader lookup for code-side strings
 │       ├── SettingsStore.cs         # JSON in %APPDATA%\EqApoTray\settings.json
 │       │                              # AOT-safe via JsonSerializerContext
 │       ├── TrayPopupPositioner.cs   # precise Shell_NotifyIconGetRect anchor

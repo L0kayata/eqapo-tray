@@ -16,7 +16,7 @@
          scripts/build_app_icon.py. -->
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <NeutralLanguage>zh-CN</NeutralLanguage>
-    <Version>0.1.0</Version>
+    <Version>1.0.0</Version>
     <!-- Required by [LibraryImport] source generator (it emits unsafe marshalling code; our own code stays safe). -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Unpackaged WinUI 3 deployment (no MSIX). -->

@@ -16,8 +16,9 @@ public partial class FlyoutControl : UserControl
     private static readonly Brush GreenBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x2E, 0xA0, 0x43));
     private static readonly Brush RedBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xD1, 0x34, 0x38));
 
-    private const string ConfigFileFilter =
-        "Equalizer APO 配置文件 (*.txt)\0*.txt\0所有文件 (*.*)\0*.*\0";
+    // Built at runtime: the \0 separators can't live in a .resw value.
+    private static readonly string ConfigFileFilter =
+        $"{Strings.Get("FileFilterConfig")} (*.txt)\0*.txt\0{Strings.Get("FileFilterAll")} (*.*)\0*.*\0";
 
     private readonly Settings _settings = SettingsStore.Load();
     private readonly DispatcherQueueTimer _writeTimer;
@@ -251,7 +252,7 @@ public partial class FlyoutControl : UserControl
     private void SetStatus(bool ok)
     {
         StatusDot.Fill = ok ? GreenBrush : RedBrush;
-        ToolTipService.SetToolTip(StatusDot, ok ? "配置文件已加载" : "无法读写配置文件（路径不存在或权限不足）");
+        ToolTipService.SetToolTip(StatusDot, Strings.Get(ok ? "StatusLoadedToolTip" : "StatusErrorToolTip"));
     }
 
     private void StartupCheck_Toggled(object sender, RoutedEventArgs e)
@@ -266,7 +267,7 @@ public partial class FlyoutControl : UserControl
             _suppressEvents = true;
             StartupCheck.IsChecked = StartupService.IsEnabled();
             _suppressEvents = false;
-            _ = ShowErrorAsync("无法修改开机自启", ex.Message);
+            _ = ShowErrorAsync(Strings.Get("StartupErrorTitle"), ex.Message);
         }
     }
 
@@ -278,7 +279,7 @@ public partial class FlyoutControl : UserControl
 
         var path = Win32FileDialog.PickFile(
             DialogOwnerHwnd,
-            "选择 Equalizer APO 配置文件",
+            Strings.Get("BrowseDialogTitle"),
             ConfigFileFilter,
             initialDir);
 
@@ -298,7 +299,7 @@ public partial class FlyoutControl : UserControl
         {
             Title = title,
             Content = message,
-            CloseButtonText = "确定",
+            CloseButtonText = Strings.Get("DialogOk"),
             XamlRoot = XamlRoot,
         };
         await dialog.ShowAsync();
