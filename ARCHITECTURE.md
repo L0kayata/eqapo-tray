@@ -37,10 +37,16 @@ eqapo-tray/
 │   └── extensions.json
 ├── icon/                            # Fluent speaker SVGs (MIT, see icon/LICENSE)
 │   ├── ic_fluent_speaker_{0,1,2}_{16,28,32,48}_regular.svg
-│   └── png/{light,dark}/            # generated rasters, every size
+│   ├── png/{light,dark}/            # generated rasters, every size
+│   └── app/                         # app icon
+│       ├── eat_glyphs.json          # "EAT" outlines from Noto Sans SC Bold
+│       ├── NotoSansSC-OFL.txt       # their licence (SIL OFL 1.1)
+│       ├── app_icon_{size}.svg      # generated, one per .ico size
+│       └── png/                     # generated rasters
 ├── scripts/
 │   ├── publish.ps1                  # Release: AOT publish → strip → zip + SHA256SUMS
-│   └── build_icons.py               # icon/*.svg → Assets/TrayIcons/*.ico + icon/png/
+│   ├── build_icons.py               # icon/*.svg → Assets/TrayIcons/*.ico + icon/png/
+│   └── build_app_icon.py            # speaker + eat_glyphs.json → Assets/AppIcon.ico + icon/app/
 ├── src/EqApoTray/                   # the only application project
 │   ├── EqApoTray.csproj
 │   ├── app.manifest                 # PerMonitorV2 DPI, asInvoker, Win10/11 target
@@ -49,6 +55,7 @@ eqapo-tray/
 │   ├── FlyoutControl.xaml(+.cs)     # the popup UserControl content
 │   ├── Assets/TrayIcons/            # speaker_{0,1,2}_{light,dark}.ico (generated,
 │   │                                  # embedded as manifest resources)
+│   ├── Assets/AppIcon.ico           # the exe's Win32 icon (generated)
 │   └── Services/
 │       ├── EqApoConfig.cs           # read/write `Preamp: X.X dB` line
 │       ├── StartupService.cs        # HKCU\…\Run registry toggle
@@ -287,7 +294,20 @@ no main window). Removing them will reproduce the original bug.
   variant. The `.ico` files are committed and embedded via
   `<EmbeddedResource LogicalName="TrayIcons.…">`; regenerate them with the
   script rather than editing them. No SVG or `System.Drawing` code runs at
-  runtime. The project enables
+  runtime.
+- **App icon source:** `Assets/AppIcon.ico` is the exe's Win32 icon
+  (`<ApplicationIcon>`; NativeAOT carries it into the native exe). Unlike
+  the tray it can't follow a theme, so it is a blue plate with white
+  artwork rather than a bare glyph. `scripts/build_app_icon.py` draws
+  every size (16–256) at its own pixel size: from 40 px up the
+  `speaker_2` 48 glyph above "EAT", below that "EAT" alone, as large as
+  the plate allows. The letters are Noto Sans SC Bold outlines baked into
+  `icon/app/eat_glyphs.json` (re-extract with `--font`), spaced optically
+  so E–A and A–T read as the same gap, and grid-fitted by the script
+  itself (the font ships no hinting): straight edges land on whole
+  pixels and strokes keep a whole-pixel weight. Regenerate rather than
+  edit; the SVGs in `icon/app/` are outputs, not sources.
+- **Unsafe blocks:** the project enables
   `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` only because the
   `[LibraryImport]` source generator emits unsafe marshalling code for the
   P/Invokes in `TrayPopupPositioner`, `FlyoutWindow`, `Win32FileDialog`,

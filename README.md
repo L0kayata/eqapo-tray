@@ -12,4 +12,6 @@ A lightweight Windows tray GUI for controlling [Equalizer APO](https://sourcefor
 
 ## Credits
 
-Tray icons are from [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) by Microsoft, MIT-licensed (see [icon/LICENSE](icon/LICENSE)).
+Tray icons, and the speaker in the app icon, are from [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) by Microsoft, MIT-licensed (see [icon/LICENSE](icon/LICENSE)).
+
+The "EAT" lettering in the app icon is drawn from [Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC) Bold, licensed under the SIL Open Font License 1.1 (see [icon/app/NotoSansSC-OFL.txt](icon/app/NotoSansSC-OFL.txt)).

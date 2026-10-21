@@ -62,12 +62,13 @@ def render(svg: str, size: int) -> bytes:
 
 def pack_ico(images: list[tuple[int, bytes]]) -> bytes:
     # ICONDIR + one 16-byte ICONDIRENTRY per image, then the PNG payloads.
+    # The entry's width/height bytes store 256 as 0.
     header = struct.pack("<HHH", 0, 1, len(images))
     offset = len(header) + 16 * len(images)
     entries = b""
     payload = b""
     for size, png in images:
-        entries += struct.pack("<BBBBHHII", size, size, 0, 0, 1, 32, len(png), offset)
+        entries += struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0, 1, 32, len(png), offset)
         payload += png
         offset += len(png)
     return header + entries + payload
