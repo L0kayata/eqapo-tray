@@ -3,6 +3,15 @@
     "allow": [
       "WebSearch",
       "WebFetch(domain:github.com)"
+    ],
+    "deny": [
+      "Bash(git commit *)",
+      "Bash(git commit)"
     ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
   }
 }

@@ -13,6 +13,7 @@ public partial class App : Application
     // writer to config.txt. Field-held so it lives as long as the process.
     private readonly Mutex _singleInstance;
     private TrayIconWithContextMenu? _trayIcon;
+    private TaskbarThemeWatcher? _themeWatcher;
     private FlyoutWindow? _flyoutWindow;
     private DispatcherQueue? _dispatcherQueue;
 
@@ -49,6 +50,18 @@ public partial class App : Application
             },
         };
         _trayIcon.MessageWindow.MouseEventReceived += OnTrayMouseEvent;
+
+        // The icon follows the gain shown in the flyout. Reading the config
+        // now, before Create(), means NIM_ADD already carries an image.
+        var iconSwitcher = new TrayIconSwitcher(_trayIcon);
+        _flyoutWindow.GainChanged += iconSwitcher.SetGain;
+        _flyoutWindow.RefreshFromDisk();
+
+        // These fire on the tray / thread-pool threads; marshal like clicks.
+        _trayIcon.MessageWindow.DpiChanged += (_, _) => _dispatcherQueue?.TryEnqueue(iconSwitcher.RefreshIconSize);
+        _trayIcon.MessageWindow.TaskbarCreated += (_, _) => _dispatcherQueue?.TryEnqueue(iconSwitcher.Reset);
+        _themeWatcher = new TaskbarThemeWatcher(() => _dispatcherQueue?.TryEnqueue(iconSwitcher.RefreshTheme));
+
         _trayIcon.Create();
 
         // Previously implied by H.NotifyIcon.WinUI's TaskbarIcon.ForceCreate().
@@ -70,6 +83,7 @@ public partial class App : Application
     {
         try
         {
+            _themeWatcher?.Dispose();
             _trayIcon?.Dispose();
         }
         catch

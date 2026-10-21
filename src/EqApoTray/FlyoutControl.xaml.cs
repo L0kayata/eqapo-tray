@@ -40,6 +40,10 @@ public partial class FlyoutControl : UserControl
 
     public IntPtr DialogOwnerHwnd { get; set; }
 
+    // Raised whenever the displayed gain changes: every slider move, and each
+    // RefreshFromDisk (startup and every show).
+    public event Action<double>? GainChanged;
+
     private void AttachGainSliderTrackDragHandlers()
     {
         GainSlider.AddHandler(
@@ -77,13 +81,13 @@ public partial class FlyoutControl : UserControl
             {
                 var current = EqApoConfig.Read(_settings.ConfigPath);
                 GainSlider.Value = current;
-                UpdateGainLabel(current);
+                DisplayGain(current);
                 SetStatus(true);
             }
             else
             {
                 GainSlider.Value = 0;
-                UpdateGainLabel(0);
+                DisplayGain(0);
                 SetStatus(false);
             }
         }
@@ -217,7 +221,7 @@ public partial class FlyoutControl : UserControl
 
     private void GainSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        UpdateGainLabel(e.NewValue);
+        DisplayGain(e.NewValue);
         if (_suppressEvents) return;
 
         _pendingValue = e.NewValue;
@@ -238,9 +242,10 @@ public partial class FlyoutControl : UserControl
         }
     }
 
-    private void UpdateGainLabel(double v)
+    private void DisplayGain(double v)
     {
         GainLabel.Text = v.ToString("+0.0;-0.0;+0.0", CultureInfo.InvariantCulture) + " dB";
+        GainChanged?.Invoke(v);
     }
 
     private void SetStatus(bool ok)

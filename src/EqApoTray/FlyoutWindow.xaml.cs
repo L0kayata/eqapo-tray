@@ -79,6 +79,14 @@ public sealed partial class FlyoutWindow : Window
 
     public bool IsOpen { get; private set; }
 
+    public event Action<double>? GainChanged
+    {
+        add => Flyout.GainChanged += value;
+        remove => Flyout.GainChanged -= value;
+    }
+
+    public void RefreshFromDisk() => Flyout.RefreshFromDisk();
+
     // One-shot: reports whether the outside-click hook dismissed the flyout
     // within the last OutsideDismissToggleWindowMs, and clears the record so a
     // single dismiss can suppress at most one tray click.

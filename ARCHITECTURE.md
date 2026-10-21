@@ -35,20 +35,28 @@ eqapo-tray/
 │   ├── launch.json
 │   ├── tasks.json
 │   └── extensions.json
+├── icon/                            # Fluent speaker SVGs (MIT, see icon/LICENSE)
+│   ├── ic_fluent_speaker_{0,1,2}_{16,28,32,48}_regular.svg
+│   └── png/{light,dark}/            # generated rasters, every size
 ├── scripts/
-│   └── publish.ps1                  # Release: AOT publish → strip → zip + SHA256SUMS
+│   ├── publish.ps1                  # Release: AOT publish → strip → zip + SHA256SUMS
+│   └── build_icons.py               # icon/*.svg → Assets/TrayIcons/*.ico + icon/png/
 ├── src/EqApoTray/                   # the only application project
 │   ├── EqApoTray.csproj
 │   ├── app.manifest                 # PerMonitorV2 DPI, asInvoker, Win10/11 target
 │   ├── App.xaml(+.cs)               # entry point; owns tray icon + FlyoutWindow
 │   ├── FlyoutWindow.xaml(+.cs)      # borderless Acrylic host window for the flyout
 │   ├── FlyoutControl.xaml(+.cs)     # the popup UserControl content
+│   ├── Assets/TrayIcons/            # speaker_{0,1,2}_{light,dark}.ico (generated,
+│   │                                  # embedded as manifest resources)
 │   └── Services/
 │       ├── EqApoConfig.cs           # read/write `Preamp: X.X dB` line
 │       ├── StartupService.cs        # HKCU\…\Run registry toggle
 │       ├── SettingsStore.cs         # JSON in %APPDATA%\EqApoTray\settings.json
 │       │                              # AOT-safe via JsonSerializerContext
 │       ├── TrayPopupPositioner.cs   # precise Shell_NotifyIconGetRect anchor
+│       ├── TrayIconSwitcher.cs      # gain level × taskbar theme → tray HICON
+│       ├── TaskbarThemeWatcher.cs   # RegNotifyChangeKeyValue on SystemUsesLightTheme
 │       └── Win32FileDialog.cs       # GetOpenFileNameW wrapper (FileOpenPicker
 │                                      # is unreliable in unpackaged WinUI 3)
 └── prototype/                       # original Python/Tk prototype (frozen)
@@ -65,7 +73,11 @@ eqapo-tray/
   with a native `PopupMenu` holding a single "退出" `PopupMenuItem`, and
   subscribes `MessageWindow.MouseEventReceived` so `IconLeftMouseUp` and
   `IconLeftDoubleClick` toggle `FlyoutWindow` (see "Tray click → flyout
-  toggled" for why the double-click counts). **Threading:** `TrayIconWithContextMenu.Create()`
+  toggled" for why the double-click counts). Before `Create()` it wires
+  `TrayIconSwitcher` to the flyout's `GainChanged`, H.NotifyIcon's
+  `DpiChanged` / `TaskbarCreated` and a `TaskbarThemeWatcher`, then calls
+  `FlyoutWindow.RefreshFromDisk()` so the tray entry is added with its
+  icon already set (see "Gain → tray icon"). **Threading:** `TrayIconWithContextMenu.Create()`
   runs its hidden message window and message loop on a background thread
   of its own, so tray callbacks arrive off the UI thread; the left-click
   handler re-enqueues `ToggleFlyout` on the UI `DispatcherQueue`
@@ -91,7 +103,10 @@ eqapo-tray/
 - **`FlyoutControl`** — Stateless w.r.t. its host except for the injected
   `DialogOwnerHwnd`. On `Loaded` and on each show (via `RefreshFromDisk`,
   called from `FlyoutWindow.ShowAt`) it pulls the current `Preamp` value,
-  autostart bit, and config-path status from disk. The slider's
+  autostart bit, and config-path status from disk. Every displayed gain
+  (load or slider move) goes through `DisplayGain`, which also raises
+  `GainChanged`; `FlyoutWindow` forwards that event because the XAML
+  `Flyout` field is private. The slider's
   `ValueChanged` is debounced through a 60 ms `DispatcherQueueTimer` to
   avoid hammering `config.txt`. Track click-to-jump is implemented via
   `PointerPressed/Moved/Released/CaptureLost` on the `Slider` itself —
@@ -113,6 +128,22 @@ eqapo-tray/
   from the overflow tray. Converts physical pixels to DIPs and clamps the
   flyout to the current monitor work area. The WinUI host re-converts back
   to physical pixels for `AppWindow.MoveAndResize`.
+- **`Services/TrayIconSwitcher`** — Maps the gain to a level (`< -5 dB` → 0
+  waves, `-5…+5 dB` inclusive → 1, `> +5 dB` → 2) and pushes the matching
+  HICON via `TrayIcon.UpdateIcon`. HICONs are decoded lazily with
+  `CreateIconFromResourceEx` from the embedded `.ico` (picking the smallest
+  entry ≥ the target size by parsing the file's ICONDIR itself;
+  `LookupIconIdFromDirectoryEx` expects the RT_GROUP_ICON resource layout,
+  not the `.ico` file layout) and cached per (theme, level). Icon size is
+  `GetSystemMetricsForDpi(SM_CXSMICON, …)` for the primary monitor, where
+  the notification area lives. UI thread only; no `Dispose`, since quit runs
+  on the tray thread and process exit frees the handles.
+- **`Services/TaskbarThemeWatcher`** — Reads `SystemUsesLightTheme` (the
+  taskbar / "Windows mode"; *not* `AppsUseLightTheme`, which can differ)
+  and watches its key with `RegNotifyChangeKeyValue` +
+  `REG_NOTIFY_THREAD_AGNOSTIC`, waited on through
+  `ThreadPool.RegisterWaitForSingleObject`. Kernel-signalled, so nothing
+  polls; the callback re-arms and reports on a thread-pool thread.
 - **`Services/Win32FileDialog`** — `GetOpenFileNameW` wrapper. Replaces
   `Windows.Storage.Pickers.FileOpenPicker`, which throws `COMException`
   in unpackaged WinUI 3 apps under various activation-context conditions.
@@ -177,6 +208,19 @@ file is missing or unwritable (typical when EqAPO is in `Program Files` and
 the app runs without elevation), the dot turns red and we surface the error
 visually rather than silently swallowing it.
 
+**Gain → tray icon.** `FlyoutControl.DisplayGain` raises `GainChanged` on
+every slider `ValueChanged` and on each `RefreshFromDisk` (startup and every
+show). `TrayIconSwitcher.SetGain` computes the level and returns if it is
+unchanged, so a drag costs a few comparisons per event; `Shell_NotifyIcon`
+(`NIM_MODIFY`) runs only when the gain crosses ±5 dB. There is no hysteresis,
+so the icon always matches the value. Other triggers, all marshalled onto
+the dispatcher: a taskbar theme change (`TaskbarThemeWatcher`) →
+`RefreshTheme`; H.NotifyIcon's `DpiChanged` → `RefreshIconSize` (drops the
+HICON cache, destroying the old handles only after the tray holds the new
+one); `TaskbarCreated` (explorer restart) → `Reset`, which re-pushes
+unconditionally in case an update raced the restart. `config.txt` is not
+watched: an external edit shows up the next time the flyout opens.
+
 **Startup checkbox → registry.** Direct, synchronous. Failure raises a
 `ContentDialog` (WinUI 3) rooted on the control's `XamlRoot`, and the
 checkbox is reverted to the actual registry state.
@@ -226,19 +270,28 @@ no main window). Removing them will reproduce the original bug.
 - **Globalization:** every numeric parse/format on `Preamp` uses
   `CultureInfo.InvariantCulture`. Don't introduce `ToString("F1")` without a
   culture argument.
-- **Threading:** all UI work stays on the dispatcher thread. The one
-  foreign thread is H.NotifyIcon's tray message loop: anything its
-  callbacks do beyond `TryEnqueue` onto `App._dispatcherQueue` must be
-  thread-safe (today that's only the Quit item's `Dispose` +
-  `Environment.Exit`). There's no `Task.Run` work yet; if file I/O ever
+- **Threading:** all UI work stays on the dispatcher thread. The foreign
+  threads are H.NotifyIcon's tray message loop (clicks, `DpiChanged`,
+  `TaskbarCreated`, the Quit item) and the thread pool
+  (`TaskbarThemeWatcher`'s callback): anything they do beyond `TryEnqueue`
+  onto `App._dispatcherQueue` must be thread-safe (today that's only the
+  Quit item's `Dispose` calls + `Environment.Exit`). There's no `Task.Run` work yet; if file I/O ever
   moves async, watch for re-entrancy on the slider event.
-- **Tray icon source:** `TrayIcon.Icon` takes a raw `HICON`. The icon is
-  intentionally left unset right now — see "Known
-  constraints / future work" — so the tray entry registers without an image
-  while a custom icon design is pending. The project enables
+- **Tray icon source:** `TrayIcon.Icon` takes a raw `HICON`. The images are
+  built offline by `scripts/build_icons.py` (`resvg-py`) from the Fluent
+  SVGs in `icon/`: 16–48 px (`SM_CXSMICON` at 100–300% scaling), each
+  rendered from a matching design size where possible (`SOURCE_FOR` in the
+  script; Fluent's 20 and 24 designs are skipped because their waves are
+  visibly shorter), in a
+  `light` (#212121 glyph, for a light taskbar) and a `dark` (#FFFFFF)
+  variant. The `.ico` files are committed and embedded via
+  `<EmbeddedResource LogicalName="TrayIcons.…">`; regenerate them with the
+  script rather than editing them. No SVG or `System.Drawing` code runs at
+  runtime. The project enables
   `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` only because the
   `[LibraryImport]` source generator emits unsafe marshalling code for the
-  P/Invokes in `TrayPopupPositioner`, `FlyoutWindow`, and `Win32FileDialog`.
+  P/Invokes in `TrayPopupPositioner`, `FlyoutWindow`, `Win32FileDialog`,
+  `TrayIconSwitcher`, and `TaskbarThemeWatcher`.
 - **Dialog ownership:** `Win32FileDialog` and `ContentDialog` both need an
   owner. `FlyoutControl.DialogOwnerHwnd` is set by `FlyoutWindow` at
   construction time and used as the file dialog's `hwndOwner`; the
@@ -284,18 +337,12 @@ VS Code tasks (`.vscode/tasks.json`): `build` (default, Ctrl+Shift+B),
 `watch`, `publish`. Recommended extensions in `.vscode/extensions.json`:
 C# Dev Kit + C#.
 
-## Known constraints / future work
+## Known constraints
 
 - **EqAPO file lock.** Equalizer APO's audio service watches `config.txt` and
   reloads on each write. Rapid writes are fine in practice (debounced to
   60 ms) but tearing is possible on slow disks — if it shows up, switch to
   write-temp-then-rename.
-- **Tray icon image.** `App.OnLaunched` does not set `TrayIcon.Icon`;
-  the library still registers the tray entry but it has no image. Custom
-  icon work is deferred — load an `.ico` asset with `LoadImageW` (or
-  `System.Drawing.Icon(...).Handle`) and assign the `HICON`, or use
-  `H.GeneratedIcons.System.Drawing` (already a transitive dependency) for
-  a code-rendered icon.
 - **WindowsAppSDK self-contained size.** The csproj references the
   `Microsoft.WindowsAppSDK.WinUI` component package (plus
   `InteractiveExperiences` to pin the version the 2.x metapackage ships)
@@ -337,7 +384,14 @@ C# Dev Kit + C#.
 - **Patching.** NativeAOT statically links the .NET runtime, so .NET
   servicing fixes only reach users by re-publishing with a current SDK.
 - **Theming.** WinUI 3 follows the system theme automatically through the
-  default `XamlControlsResources` — no manual theme switch needed.
+  default `XamlControlsResources` — no manual theme switch needed. That is
+  the *app* theme; the tray icon follows the separate *taskbar* theme via
+  `TaskbarThemeWatcher`. High-contrast themes get no dedicated icon variant.
+- **DPI change detection.** The tray icon size is re-evaluated on
+  H.NotifyIcon's `DpiChanged` (sent to its hidden message window) and on
+  `TaskbarCreated`. If a scaling change ever leaves the icon blurry, also
+  calling `TrayIconSwitcher.RefreshIconSize()` from `ToggleFlyout` is a
+  cheap fallback (it returns early when the size is unchanged).
 
 ## What lives in `prototype/`
 
