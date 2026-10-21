@@ -57,7 +57,10 @@ public partial class App : Application
 
     private void OnTrayMouseEvent(object? sender, MessageWindow.MouseEventReceivedEventArgs e)
     {
-        if (e.MouseEvent == MouseEvent.IconLeftMouseUp)
+        // A quick second click arrives from the shell as WM_LBUTTONDBLCLK, and
+        // H.NotifyIcon then swallows the mouse-up that follows it, so the
+        // double-click event has to count as a click too.
+        if (e.MouseEvent is MouseEvent.IconLeftMouseUp or MouseEvent.IconLeftDoubleClick)
         {
             _dispatcherQueue?.TryEnqueue(ToggleFlyout);
         }
@@ -83,17 +86,22 @@ public partial class App : Application
             return;
         }
 
+        // A click on the tray icon while the flyout is open first trips the
+        // flyout's outside-click hook on mouse-down, which usually hides it
+        // before this handler runs. Consume that record on every toggle, not
+        // just when it suppresses a reopen: a leftover record would swallow the
+        // next quick click too.
+        var justDismissed = _flyoutWindow.ConsumeRecentOutsideDismiss();
+
         if (_flyoutWindow.IsOpen)
         {
             _flyoutWindow.HideFlyout();
             return;
         }
 
-        // A click on the tray icon while the flyout is open first trips the
-        // flyout's outside-click hook on mouse-down, which hides it before this
-        // mouse-up handler runs. Treat that as the "close" half of the toggle
-        // rather than reopening.
-        if (_flyoutWindow.WasJustDismissedByOutsideClick)
+        // The hook already closed it for this click: that was the "close" half
+        // of the toggle, so don't reopen.
+        if (justDismissed)
         {
             return;
         }

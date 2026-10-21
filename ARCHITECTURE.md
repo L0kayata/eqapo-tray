@@ -36,7 +36,7 @@ eqapo-tray/
 │   ├── tasks.json
 │   └── extensions.json
 ├── scripts/
-│   └── publish.ps1                  # one-shot single-file Release build
+│   └── publish.ps1                  # Release: AOT publish → strip → zip + SHA256SUMS
 ├── src/EqApoTray/                   # the only application project
 │   ├── EqApoTray.csproj
 │   ├── app.manifest                 # PerMonitorV2 DPI, asInvoker, Win10/11 target
@@ -63,8 +63,9 @@ eqapo-tray/
   (`Local\EqApoTray`) and exits immediately if another instance holds it.
   `OnLaunched` constructs an `H.NotifyIcon.Core.TrayIconWithContextMenu`
   with a native `PopupMenu` holding a single "退出" `PopupMenuItem`, and
-  subscribes `MessageWindow.MouseEventReceived` so `IconLeftMouseUp`
-  toggles `FlyoutWindow`. **Threading:** `TrayIconWithContextMenu.Create()`
+  subscribes `MessageWindow.MouseEventReceived` so `IconLeftMouseUp` and
+  `IconLeftDoubleClick` toggle `FlyoutWindow` (see "Tray click → flyout
+  toggled" for why the double-click counts). **Threading:** `TrayIconWithContextMenu.Create()`
   runs its hidden message window and message loop on a background thread
   of its own, so tray callbacks arrive off the UI thread; the left-click
   handler re-enqueues `ToggleFlyout` on the UI `DispatcherQueue`
@@ -122,7 +123,8 @@ eqapo-tray/
 ## Key flows
 
 **Tray click → flyout shown.** `App.ToggleFlyout` (wired to the tray's
-`IconLeftMouseUp` event) asks `TrayPopupPositioner` for the real icon
+`IconLeftMouseUp` / `IconLeftDoubleClick` events, marshalled onto the UI
+dispatcher) asks `TrayPopupPositioner` for the real icon
 rectangle, computes the popup placement, and calls
 `FlyoutWindow.ShowAt(anchor)`. The window is moved + resized in physical
 pixels via `AppWindow.MoveAndResize`, shown with `activateWindow:true`,
@@ -145,14 +147,18 @@ flyout. The mouse hook fires first, on mouse-down (the click is outside the
 flyout's rect): it stamps `_lastOutsideDismissTick` and enqueues
 `HideFlyout`. The tray's `IconLeftMouseUp` arrives later, on the tray's own
 thread, and is enqueued behind it — so by the time `ToggleFlyout` runs the
-flyout is usually already hidden. `ToggleFlyout` therefore checks
-`FlyoutWindow.WasJustDismissedByOutsideClick` (hook fired < 500 ms ago)
+flyout is usually already hidden. `ToggleFlyout` therefore calls
+`FlyoutWindow.ConsumeRecentOutsideDismiss()` (hook fired < 500 ms ago)
 and, if so, treats the click as the "close" half of the toggle instead of
 reopening. If the ordering happens to go the other way, `ToggleFlyout` sees
 `IsOpen == true` and hides it itself; the hook's queued `HideFlyout` then
 no-ops via the `IsOpen` guard. Either way: a single, reliable close.
-Side effect: clicking elsewhere and then the tray icon within 500 ms
-doesn't open the flyout.
+The record is cleared on *every* toggle, so one dismiss suppresses at most
+one tray click — otherwise a quick close-then-reopen would be swallowed.
+That quick second click arrives from the shell as `WM_LBUTTONDBLCLK`, after
+which H.NotifyIcon swallows the mouse-up, so `IconLeftDoubleClick` also
+toggles. Remaining side effect: clicking elsewhere and then the tray icon
+within 500 ms doesn't open the flyout.
 
 **Config picker → Win32 GetOpenFileNameW.** The "配置..." button calls
 `Win32FileDialog.PickFile(DialogOwnerHwnd, …)`, which marshals the dialog
@@ -213,15 +219,19 @@ no main window). Removing them will reproduce the original bug.
   target that injects both file sets before `ComputeFilesToPublish`. Affects
   both AOT and non-AOT publish; running the bin output directly is
   unaffected because the build already lays the files next to the exe.
+  Still true on WASDK 2.5.1 (re-checked by disabling the target).
 
 ## Conventions / invariants
 
 - **Globalization:** every numeric parse/format on `Preamp` uses
   `CultureInfo.InvariantCulture`. Don't introduce `ToString("F1")` without a
   culture argument.
-- **Threading:** all UI work stays on the dispatcher thread. There's no
-  background work that needs `Task.Run` yet; if file I/O ever moves async,
-  watch for re-entrancy on the slider event.
+- **Threading:** all UI work stays on the dispatcher thread. The one
+  foreign thread is H.NotifyIcon's tray message loop: anything its
+  callbacks do beyond `TryEnqueue` onto `App._dispatcherQueue` must be
+  thread-safe (today that's only the Quit item's `Dispose` +
+  `Environment.Exit`). There's no `Task.Run` work yet; if file I/O ever
+  moves async, watch for re-entrancy on the slider event.
 - **Tray icon source:** `TrayIcon.Icon` takes a raw `HICON`. The icon is
   intentionally left unset right now — see "Known
   constraints / future work" — so the tray entry registers without an image
@@ -317,8 +327,13 @@ C# Dev Kit + C#.
   to JIT publish via `-p:PublishAot=false`. With VS 18 Build Tools,
   `vcvarsall.bat` also calls `vswhere.exe` through `PATH`; `publish.ps1`
   prepends the VS Installer directory when it's missing.
-- **WASDK publish still drops `.xbf`/`.pri`** on 2.x (re-checked on 2.5.1
-  by disabling `_IncludeWinUIArtifactsInPublish`). Keep the target.
+- **Single instance, no hand-off.** A second launch (e.g. double-clicking
+  the exe while the autostart copy runs) exits silently on the
+  `Local\EqApoTray` mutex; it doesn't ask the running instance to show its
+  flyout. That would need IPC — not worth it yet. Side effect while
+  testing: a stale instance (including an old build started via the Run
+  key) makes a freshly built exe appear to "not start", and keeps
+  `dist/` locked so `publish.ps1` fails.
 - **Patching.** NativeAOT statically links the .NET runtime, so .NET
   servicing fixes only reach users by re-publishing with a current SDK.
 - **Theming.** WinUI 3 follows the system theme automatically through the

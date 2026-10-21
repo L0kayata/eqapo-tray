@@ -79,9 +79,15 @@ public sealed partial class FlyoutWindow : Window
 
     public bool IsOpen { get; private set; }
 
-    public bool WasJustDismissedByOutsideClick =>
-        _lastOutsideDismissTick is { } tick &&
-        Environment.TickCount64 - tick < OutsideDismissToggleWindowMs;
+    // One-shot: reports whether the outside-click hook dismissed the flyout
+    // within the last OutsideDismissToggleWindowMs, and clears the record so a
+    // single dismiss can suppress at most one tray click.
+    public bool ConsumeRecentOutsideDismiss()
+    {
+        var tick = _lastOutsideDismissTick;
+        _lastOutsideDismissTick = null;
+        return tick is { } t && Environment.TickCount64 - t < OutsideDismissToggleWindowMs;
+    }
 
     public void ShowAt(TrayPopupPositioner.ScreenBounds anchor)
     {
