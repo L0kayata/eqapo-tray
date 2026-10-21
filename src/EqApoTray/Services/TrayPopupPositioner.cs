@@ -1,5 +1,5 @@
 using System.Runtime.InteropServices;
-using H.NotifyIcon;
+using H.NotifyIcon.Core;
 
 namespace EqApoTray.Services;
 
@@ -12,7 +12,7 @@ public static partial class TrayPopupPositioner
     private const int SmCyVirtualScreen = 79;
     private const int DefaultDpi = 96;
 
-    public static bool TryGetTrayIconBounds(TaskbarIcon trayIcon, out ScreenBounds bounds)
+    public static bool TryGetTrayIconBounds(TrayIcon trayIcon, out ScreenBounds bounds)
     {
         bounds = default;
 
@@ -46,10 +46,10 @@ public static partial class TrayPopupPositioner
         return true;
     }
 
-    private static bool TryGetNotifyIconRect(TaskbarIcon trayIcon, out NativeRect iconRect)
+    private static bool TryGetNotifyIconRect(TrayIcon trayIcon, out NativeRect iconRect)
     {
-        var windowHandle = trayIcon.TrayIcon.WindowHandle;
-        var iconId = trayIcon.TrayIcon.Id;
+        var windowHandle = trayIcon.WindowHandle;
+        var iconId = trayIcon.Id;
 
         var identifier = new NotifyIconIdentifier
         {

@@ -19,15 +19,26 @@
     <!-- Unpackaged WinUI 3 deployment (no MSIX). -->
     <WindowsPackageType>None</WindowsPackageType>
     <EnableMsixTooling>false</EnableMsixTooling>
-    <WindowsAppSDKSelfContained Condition="'$(RuntimeIdentifier)' != ''">true</WindowsAppSDKSelfContained>
+    <!-- The component-only WASDK reference below (no Microsoft.WindowsAppSDK.Runtime)
+         has no framework-dependent mode: every build is self-contained and needs
+         a RID. Default to the host's so plain `dotnet build` / F5 keep working. -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkPortableRuntimeIdentifier)</RuntimeIdentifier>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <!-- Keep Debug fast; AOT only on Release. -->
     <PublishAot Condition="'$(Configuration)' == 'Release'">true</PublishAot>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260416003" />
+    <!-- WinUI component only (version pinned by the Microsoft.WindowsAppSDK
+         2.5.1 metapackage), not the metapackage itself: that would also pull
+         the AI/ML/Search/Widgets runtimes, which this app never loads. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.3.9" />
+    <!-- WinUI 2.3.9 asks for >= 2.1.8, which was never published (NU1603). -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="2.1.9" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.1839" />
-    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
+    <!-- Core (non-WinUI) package: H.NotifyIcon.WinUI depends on the WASDK
+         metapackage, which would defeat the component-only reference above. -->
+    <PackageReference Include="H.NotifyIcon" Version="2.4.1" />
   </ItemGroup>
 
   <!--

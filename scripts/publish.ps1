@@ -8,14 +8,15 @@
       1. dotnet publish (Native AOT, self-contained) → dist/EqApoTray-win-x64/
       2. Strip components this app provably does not load:
            - EqApoTray.pdb
-           - AI/ML runtime (onnxruntime, DirectML, Microsoft.Windows.AI.*,
-             Imaging, Workloads, Vision, NpuDetect/)
-           - Microsoft.Windows.Widgets, Microsoft.Web.WebView2,
-             WebView2Loader, WinUIEdit
+           - Microsoft.Web.WebView2.Core, WebView2Loader (WinUI dependency;
+             this app embeds no web content)
            - Locale *.mui folders other than zh-CN (NeutralLanguage) and
              en-us (fallback)
-         Anything that touches XAML, composition, MRT, or the
-         WindowsAppRuntime bootstrap stays in.
+         The AI/ML/Search/Widgets runtimes are never restored in the first
+         place: the csproj references the Microsoft.WindowsAppSDK.WinUI
+         component, not the metapackage. Anything that touches XAML,
+         composition, MRT, or the WindowsAppRuntime bootstrap stays in,
+         including WinUIEdit.dll (see below).
       3. Compress dist/EqApoTray-win-x64/ → dist/EqApoTray-v<Version>-win-x64.zip
       4. Hash the zip → dist/SHA256SUMS.txt
 
@@ -54,6 +55,15 @@ if (Test-Path $output) {
     Remove-Item -Recurse -Force $output
 }
 
+# NativeAOT locates link.exe via vcvarsall.bat, which (as of VS 18 Build
+# Tools) invokes vswhere.exe through PATH. The VS installer doesn't put it
+# there, so outside a Developer prompt the link step fails with
+# "'vswhere.exe' is not recognized".
+$vsInstallerDir = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer"
+if ((Test-Path (Join-Path $vsInstallerDir "vswhere.exe")) -and -not (Get-Command vswhere.exe -ErrorAction SilentlyContinue)) {
+    $env:PATH = "$vsInstallerDir;$env:PATH"
+}
+
 dotnet publish $project `
     -c $Configuration `
     -r $Runtime `
@@ -73,29 +83,6 @@ Write-Host "Stripping unused components..." -ForegroundColor Cyan
 $stripFilePatterns = @(
     # Debug symbols
     'EqApoTray.pdb',
-    # AI / ML runtime
-    'onnxruntime.dll',
-    'onnxruntime_providers_shared.dll',
-    'DirectML.dll',
-    'Microsoft.Windows.AI*.dll',
-    'Microsoft.Windows.AI*.winmd',
-    'Microsoft.Graphics.Imaging.dll',
-    'Microsoft.Graphics.Imaging.winmd',
-    'Microsoft.Graphics.ImagingInternal*.winmd',
-    'Microsoft.Graphics.Internal.Imaging.winmd',
-    'Microsoft.Windows.Workloads.dll',
-    'Microsoft.Windows.Workloads.Resources*.dll',
-    'Microsoft.Windows.Workloads.winmd',
-    'Microsoft.Windows.Private.Workloads.SessionManager.winmd',
-    'Microsoft.Windows.SemanticSearch.winmd',
-    'Microsoft.Windows.Vision.winmd',
-    'Microsoft.Windows.VisionInternal.winmd',
-    'Microsoft.Windows.Internal.Vision.winmd',
-    'workloads.json',
-    'workloads.*.json',
-    # Widgets
-    'Microsoft.Windows.Widgets.dll',
-    'Microsoft.Windows.Widgets.winmd',
     # WebView2 (this app embeds no web content)
     'Microsoft.Web.WebView2.Core.dll',
     'WebView2Loader.dll'
@@ -103,8 +90,6 @@ $stripFilePatterns = @(
     # *looks* safe to remove, but WinUI 3 crashes at startup without it
     # (verified empirically on WindowsAppSDK 1.8). Leave it bundled.
 )
-
-$stripDirs = @('NpuDetect')
 
 # Locale folders to keep. Everything else matching a locale-id pattern
 # (lowercase-leading hyphenated id like 'zh-CN', 'gd-gb', 'sr-Latn-RS')
@@ -120,17 +105,6 @@ foreach ($pattern in $stripFilePatterns) {
         $stripBytes += $_.Length
         $stripCount++
         Remove-Item $_.FullName -Force
-    }
-}
-
-foreach ($dir in $stripDirs) {
-    $dirPath = Join-Path $output $dir
-    if (Test-Path $dirPath) {
-        Get-ChildItem $dirPath -Recurse -File | ForEach-Object {
-            $stripBytes += $_.Length
-            $stripCount++
-        }
-        Remove-Item $dirPath -Recurse -Force
     }
 }
 

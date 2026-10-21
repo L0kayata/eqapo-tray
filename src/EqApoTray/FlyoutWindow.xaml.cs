@@ -47,6 +47,11 @@ public sealed partial class FlyoutWindow : Window
     private LowLevelMouseProc? _mouseHookProc;
     private IntPtr _mouseHookHandle = IntPtr.Zero;
 
+    // Mouse-down to tray-icon mouse-up, plus dispatcher latency, fits well
+    // within this; a deliberate "click elsewhere, then click the icon" doesn't.
+    private const long OutsideDismissToggleWindowMs = 500;
+    private long? _lastOutsideDismissTick;
+
     public FlyoutWindow()
     {
         InitializeComponent();
@@ -73,6 +78,10 @@ public sealed partial class FlyoutWindow : Window
     }
 
     public bool IsOpen { get; private set; }
+
+    public bool WasJustDismissedByOutsideClick =>
+        _lastOutsideDismissTick is { } tick &&
+        Environment.TickCount64 - tick < OutsideDismissToggleWindowMs;
 
     public void ShowAt(TrayPopupPositioner.ScreenBounds anchor)
     {
@@ -155,6 +164,7 @@ public sealed partial class FlyoutWindow : Window
                         // Don't swallow the click — let it propagate to whatever
                         // the user actually clicked on. We just dismiss in
                         // parallel.
+                        _lastOutsideDismissTick = Environment.TickCount64;
                         _dispatcherQueue.TryEnqueue(HideFlyout);
                     }
                 }
